@@ -113,6 +113,40 @@ def get_stats():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route('/api/logs')
+def get_traffic_logs():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs', 'alerts.db')
+        if not os.path.exists(db_path):
+            return jsonify([])
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='TRAFFIC_LOG'")
+        if cursor.fetchone() is None:
+            conn.close()
+            return jsonify([])
+        
+        cursor.execute("SELECT source_ip, destination_ip, port, protocol, classification, timestamp FROM TRAFFIC_LOG ORDER BY log_id DESC LIMIT 100")
+        rows = cursor.fetchall()
+        conn.close()
+
+        logs = []
+        for r in rows:
+            proto_str = "TCP" if str(r[3]) in ['6', 'TCP'] else "UDP" if str(r[3]) in ['17', 'UDP'] else "ICMP" if str(r[3]) in ['1', 'ICMP'] else str(r[3])
+            logs.append({
+                "src": r[0],
+                "dst": r[1],
+                "port": r[2],
+                "proto": proto_str,
+                "verdict": r[4],
+                "type": r[4],
+                "timestamp": r[5],
+                "length": 500
+            })
+        return jsonify(logs)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/send-code', methods=['POST'])
 def send_code():
     data = request.json

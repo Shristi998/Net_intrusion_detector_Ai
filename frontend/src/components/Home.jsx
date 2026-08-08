@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ShieldCheck, LayoutDashboard, Bell, List, BarChart3, Settings as SettingsIcon, User, LogOut, ChevronDown, AlertTriangle, Moon, Sun } from "lucide-react";
+import { ShieldCheck, LayoutDashboard, Bell, List, BarChart3, Settings as SettingsIcon, User, LogOut, ChevronDown, AlertTriangle, Moon, Sun, Network as NetworkIcon, X } from "lucide-react";
 import Overview from "../pages/Overview";
 import Alerts from "../pages/Alerts";
 import Detections from "../pages/Detections"; // Mapped to Model performance
 import Logs from "../pages/Logs"; // Mapped to Traffic log
 import Settings from "../pages/Settings"; // Mapped to Admin
+import Network from "../pages/Network";
 
 import { io } from "socket.io-client";
 
@@ -14,6 +15,7 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [livePackets, setLivePackets] = useState([]);
   const [liveAlerts, setLiveAlerts] = useState([]);
+  const [toasts, setToasts] = useState([]);
   const [stats, setStats] = useState({
     totalAnalyzed: 0,
     threatsFound: 0,
@@ -24,6 +26,25 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
   const alertCounterRef = useRef(0);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const triggerToast = (alertItem) => {
+    const toastId = Math.random().toString(36).substring(2, 9);
+    const newToast = { id: toastId, ...alertItem };
+    setToasts(prev => [newToast, ...prev].slice(0, 3));
+
+    // Auto dismiss after 5 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== toastId));
+    }, 5000);
+  };
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const handleClearAlerts = () => {
+    setLiveAlerts([]);
+  };
+
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/stats`)
       .then(res => res.json())
@@ -31,6 +52,27 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
         if (data.threatsFound) {
           setStats(s => ({ ...s, threatsFound: data.threatsFound }));
           alertCounterRef.current = data.threatsFound;
+        }
+      })
+      .catch(err => console.error(err));
+
+    fetch(`${BACKEND_URL}/api/logs`)
+      .then(res => res.json())
+      .then(logs => {
+        if (Array.isArray(logs) && logs.length > 0) {
+          const formattedLogs = logs.map(l => ({
+            id: Math.random().toString(36).substr(2, 9),
+            time: new Date(l.timestamp),
+            src: l.src,
+            dst: l.dst,
+            proto: l.proto,
+            size: l.length || 500,
+            flags: "...",
+            sev: l.verdict === 'Normal' ? 'Low' : 'High',
+            type: l.verdict,
+            verdict: l.verdict
+          }));
+          setLivePackets(formattedLogs);
         }
       })
       .catch(err => console.error(err));
@@ -70,7 +112,7 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
         verdict: data.verdict || data.type
       };
 
-      setLivePackets(prev => [newPacket, ...prev].slice(0, 50));
+      setLivePackets(prev => [newPacket, ...prev].slice(0, 100));
 
       if (data.verdict !== "Normal" && data.type !== "Normal") {
         alertCounterRef.current += 1;
@@ -98,7 +140,13 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
           srcIp: data.src,
           destIp: data.dst,
         };
+
         setLiveAlerts(prev => [newAlert, ...prev].slice(0, 100));
+
+        // Popup toast notification for high/critical threats
+        if (severity === 'Critical' || severity === 'High') {
+          triggerToast(newAlert);
+        }
       }
     });
 
@@ -110,7 +158,7 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
     return () => socket.disconnect();
   }, []);
 
-  const activeAlertsCount = liveAlerts.length; // Or stats.threatsFound if you prefer
+  const activeAlertsCount = liveAlerts.length;
 
   const lightThemeCss = `
     :root {
@@ -177,6 +225,29 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
       display: "flex",
       flexDirection: "column"
     }}>
+      {/* Toast Notification Container */}
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <div key={toast.id} className="toast-item">
+            <AlertTriangle size={20} color="var(--text-danger)" style={{ flexShrink: 0, marginTop: "2px" }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                <span style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-danger)" }}>THREAT DETECTED</span>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "monospace" }}>{toast.id}</span>
+              </div>
+              <p style={{ fontSize: "13px", fontWeight: "600", margin: "0 0 2px", color: "var(--text-main)" }}>{toast.type}</p>
+              <p style={{ fontSize: "11px", margin: 0, color: "var(--text-secondary)", fontFamily: "monospace" }}>{toast.srcIp} &rarr; {toast.destIp}</p>
+            </div>
+            <button 
+              onClick={() => removeToast(toast.id)} 
+              style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "2px" }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
         
@@ -323,6 +394,9 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
               <button type="button" className={`navitem ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>
                 <List size={16} />Traffic log
               </button>
+              <button type="button" className={`navitem ${activeTab === 'network' ? 'active' : ''}`} onClick={() => setActiveTab('network')}>
+                <NetworkIcon size={16} />Network Map
+              </button>
             </div>
             
             <p style={{ padding: "0 1rem", fontSize: "11px", color: "var(--text-muted)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.02em" }}>System</p>
@@ -339,8 +413,9 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
           {/* Main Content Area */}
           <div style={{ flex: 1, padding: "1.25rem", minWidth: 0, overflowY: "auto", background: "var(--bg-base)" }}>
             {activeTab === 'overview' && <Overview stats={stats} packets={livePackets} alerts={liveAlerts} modelInfo={modelInfo} />}
-            {activeTab === 'alerts' && <Alerts alerts={liveAlerts} />}
+            {activeTab === 'alerts' && <Alerts alerts={liveAlerts} onClearAlerts={handleClearAlerts} />}
             {activeTab === 'logs' && <Logs packets={livePackets} />}
+            {activeTab === 'network' && <Network packets={livePackets} />}
             {activeTab === 'model' && <Detections modelInfo={modelInfo} />}
             {activeTab === 'admin' && <Settings modelInfo={modelInfo} />}
           </div>
@@ -349,3 +424,4 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
     </div>
   );
 }
+

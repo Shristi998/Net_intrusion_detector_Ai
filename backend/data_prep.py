@@ -56,7 +56,10 @@ def run_phase_1(csv_path, output_dir):
     ]
     for feature in skewed_network_features:
         if feature in X.columns:
-            X[feature] = np.log1p(X[feature])
+            X[feature] = np.log1p(np.maximum(0, pd.to_numeric(X[feature], errors='coerce').fillna(0)))
+
+    # Fill any remaining NaNs across all features if present
+    X.fillna(0, inplace=True)
 
     # STEP 5: CATEGORICAL PROTOCOL ENCODING
     if 'Protocol' in X.columns:
