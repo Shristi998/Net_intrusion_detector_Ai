@@ -1,6 +1,6 @@
 # Network Intrusion Detection System (NIDS) — AI-Powered
 
-A comprehensive machine learning pipeline and real-time dashboard that detects network intrusions. It utilizes a trained XGBoost model operating on the IDS2025 network flow dataset. It includes data preparation, GAN-based data augmentation for class balancing, an API for WebSockets, and a beautiful React frontend to visualize live packet captures and AI classifications.
+A comprehensive machine learning pipeline and real-time dashboard that detects network intrusions. It utilizes a trained XGBoost model operating on the IDS2025 network flow dataset. It includes data preparation, GAN-based data augmentation for class balancing, a Flask Socket.IO API server, and a high-performance React dashboard featuring Chart.js visual analytics, severity filtering, slide-in toast notifications, dynamic subnet topology monitoring, and CSV report exports.
 
 ---
 
