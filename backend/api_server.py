@@ -76,6 +76,42 @@ def test_disconnect():
 @socketio.on('new_packet')
 def handle_new_packet(data):
     print("Received new packet:", data)
+    verdict = data.get('verdict') or data.get('type')
+    src_ip = data.get('src') or data.get('src_ip')
+    
+    if verdict and verdict not in ['Normal', 'BENIGN_LABEL', 'Benign'] and src_ip and not src_ip.startswith('127.'):
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM CONTROL_FLAGS WHERE key = 'autoblock_enabled'")
+            row = cursor.fetchone()
+            enabled = (row[0] == '1') if row else True
+            if enabled:
+                now_str = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+                reason = f"IMMEDIATE AUTO-BLOCK: Threat detected ({verdict})"
+                cursor.execute('''
+                    INSERT INTO BLOCKED_IP (ip, reason, blocked_at, auto_blocked)
+                    VALUES (?, ?, ?, 1)
+                    ON CONFLICT(ip) DO UPDATE SET reason=excluded.reason, blocked_at=excluded.blocked_at, auto_blocked=1
+                ''', (src_ip, reason, now_str))
+                conn.commit()
+                emit('blocked_ip_update', {
+                    'action': 'block',
+                    'ip': src_ip,
+                    'reason': reason,
+                    'blocked_at': now_str,
+                    'auto_blocked': True
+                }, broadcast=True)
+                
+                try:
+                    subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=NIDS_Block_{src_ip}', 'dir=in', 'action=block', f'remoteip={src_ip}'], capture_output=True)
+                except Exception:
+                    pass
+            conn.close()
+        except Exception as e:
+            print("Auto-block error:", e)
+
     # Broadcast to all connected web clients
     emit('packet_update', data, broadcast=True)
 
@@ -553,46 +589,66 @@ def get_blocked_ips():
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT ip, blocked_at FROM BLOCKED_IP ORDER BY blocked_at DESC")
+        cursor.execute("SELECT ip, reason, blocked_at, auto_blocked FROM BLOCKED_IP ORDER BY blocked_at DESC")
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([{"ip": row[0], "blocked_at": row[1]} for row in rows])
+        return jsonify([{
+            "ip": row[0],
+            "reason": row[1] if row[1] is not None else "",
+            "blocked_at": row[2],
+            "auto_blocked": bool(row[3])
+        } for row in rows])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/block_ip', methods=['POST'])
 def block_ip():
     try:
-        data = request.json
+        data = request.json or {}
         ip = data.get('ip')
-        if not ip: return jsonify({"error": "IP is required"}), 400
+        reason = data.get('reason', '')
+        auto_blocked = 1 if data.get('auto_blocked') else 0
+        if not ip: return jsonify({"error": "IP address is required"}), 400
         
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
         conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("INSERT INTO BLOCKED_IP (ip) VALUES (?)", (ip,))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            pass # Already blocked
+        cursor = conn.cursor()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('''
+            INSERT INTO BLOCKED_IP (ip, reason, blocked_at, auto_blocked)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET reason=excluded.reason, blocked_at=excluded.blocked_at, auto_blocked=excluded.auto_blocked
+        ''', (ip, reason, now_str, auto_blocked))
+        conn.commit()
         conn.close()
         
+        # Emit WebSocket event
+        socketio.emit('blocked_ip_update', {
+            'action': 'block',
+            'ip': ip,
+            'reason': reason,
+            'blocked_at': now_str,
+            'auto_blocked': bool(auto_blocked)
+        })
+
         # Try OS level block
+        os_blocked = False
         try:
             subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=NIDS_Block_{ip}', 'dir=in', 'action=block', f'remoteip={ip}'], check=True, capture_output=True)
             os_blocked = True
         except Exception:
             os_blocked = False
             
-        return jsonify({"success": True, "os_blocked": os_blocked})
+        return jsonify({"success": True, "ip": ip, "reason": reason, "os_blocked": os_blocked})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/unblock_ip', methods=['POST'])
 def unblock_ip():
     try:
-        data = request.json
+        data = request.json or {}
         ip = data.get('ip')
-        if not ip: return jsonify({"error": "IP is required"}), 400
+        if not ip: return jsonify({"error": "IP address is required"}), 400
         
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
         conn = sqlite3.connect(db_path)
@@ -600,16 +656,54 @@ def unblock_ip():
         conn.commit()
         conn.close()
         
+        # Emit WebSocket event
+        socketio.emit('blocked_ip_update', {
+            'action': 'unblock',
+            'ip': ip
+        })
+
         # Try OS level unblock
+        os_unblocked = False
         try:
             subprocess.run(['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name=NIDS_Block_{ip}'], check=True, capture_output=True)
             os_unblocked = True
         except Exception:
             os_unblocked = False
             
-        return jsonify({"success": True, "os_unblocked": os_unblocked})
+        return jsonify({"success": True, "ip": ip, "os_unblocked": os_unblocked})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/config/autoblock', methods=['GET', 'POST'])
+def handle_autoblock_config():
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+    if request.method == 'POST':
+        try:
+            data = request.json or {}
+            enabled = '1' if data.get('enabled', True) else '0'
+            threshold = str(int(data.get('threshold', 3)))
+            
+            conn = sqlite3.connect(db_path)
+            conn.execute("INSERT OR REPLACE INTO CONTROL_FLAGS (key, value) VALUES ('autoblock_enabled', ?)", (enabled,))
+            conn.execute("INSERT OR REPLACE INTO CONTROL_FLAGS (key, value) VALUES ('autoblock_threshold', ?)", (threshold,))
+            conn.commit()
+            conn.close()
+            return jsonify({"success": True, "enabled": enabled == '1', "threshold": int(threshold)})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM CONTROL_FLAGS WHERE key IN ('autoblock_enabled', 'autoblock_threshold')")
+            rows = dict(cursor.fetchall())
+            conn.close()
+            
+            enabled = rows.get('autoblock_enabled', '1') == '1'
+            threshold = int(rows.get('autoblock_threshold', '1'))
+            return jsonify({"enabled": enabled, "threshold": threshold})
+        except Exception as e:
+            return jsonify({"enabled": True, "threshold": 1})
 
 import threading
 
@@ -620,8 +714,16 @@ def init_db():
                         key TEXT PRIMARY KEY,
                         value TEXT
                     )''')
-    # Set default if not exists
+    conn.execute('''CREATE TABLE IF NOT EXISTS BLOCKED_IP (
+                        ip TEXT PRIMARY KEY,
+                        reason TEXT DEFAULT 'Manual Block',
+                        blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        auto_blocked INTEGER DEFAULT 0
+                    )''')
+    # Set defaults if not exist
     conn.execute("INSERT OR IGNORE INTO CONTROL_FLAGS (key, value) VALUES ('sniffer_state', 'RUNNING')")
+    conn.execute("INSERT OR IGNORE INTO CONTROL_FLAGS (key, value) VALUES ('autoblock_enabled', '1')")
+    conn.execute("INSERT OR IGNORE INTO CONTROL_FLAGS (key, value) VALUES ('autoblock_threshold', '1')")
     conn.commit()
     conn.close()
 

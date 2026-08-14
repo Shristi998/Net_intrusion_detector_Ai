@@ -700,8 +700,63 @@ class LiveSniffer:
         
         self.blacklist = set()
         self.last_blacklist_refresh = 0
+        self.threat_counts = {}
 
-        # Removed Socket.IO from LiveSniffer; it's handled completely by AlertLogger
+    def _check_and_auto_block(self, src_ip: str, label: str):
+        """Check threat threshold and automatically block malicious IP if limit is exceeded."""
+        if not src_ip or src_ip in self.blacklist or src_ip.startswith("127.") or src_ip == "0.0.0.0":
+            return
+        
+        self.threat_counts[src_ip] = self.threat_counts.get(src_ip, 0) + 1
+        count = self.threat_counts[src_ip]
+        
+        autoblock_enabled = True
+        threshold = 1  # Default to immediate block on 1st threat detection
+        try:
+            conn = sqlite3.connect(ALERT_DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM CONTROL_FLAGS WHERE key IN ('autoblock_enabled', 'autoblock_threshold')")
+            flags = dict(cursor.fetchall())
+            conn.close()
+            autoblock_enabled = flags.get('autoblock_enabled', '1') == '1'
+            threshold = int(flags.get('autoblock_threshold', '1'))
+        except Exception:
+            pass
+            
+        if autoblock_enabled and (count >= threshold or label != BENIGN_LABEL):
+            reason = f"IMMEDIATE AUTO-BLOCK: Threat detected ({label})"
+            logger.warning(f"[!] INSTANT BLOCK TRIGGERED for {src_ip}: {reason}")
+            self.blacklist.add(src_ip)
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            try:
+                conn = sqlite3.connect(ALERT_DB_PATH)
+                conn.execute('''
+                    INSERT INTO BLOCKED_IP (ip, reason, blocked_at, auto_blocked)
+                    VALUES (?, ?, ?, 1)
+                    ON CONFLICT(ip) DO UPDATE SET reason=excluded.reason, blocked_at=excluded.blocked_at, auto_blocked=1
+                ''', (src_ip, reason, now_str))
+                conn.commit()
+                conn.close()
+                
+                # Emit WebSocket update if connected
+                if hasattr(self, 'alert_logger') and hasattr(self.alert_logger, 'sio') and self.alert_logger.sio.connected:
+                    try:
+                        self.alert_logger.sio.emit('blocked_ip_update', {
+                            'action': 'block',
+                            'ip': src_ip,
+                            'reason': reason,
+                            'blocked_at': now_str,
+                            'auto_blocked': True
+                        })
+                    except Exception:
+                        pass
+                
+                try:
+                    subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=NIDS_Block_{src_ip}', 'dir=in', 'action=block', f'remoteip={src_ip}'], capture_output=True)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"Error persisting auto-block rule for {src_ip}: {e}")
 
     def _scapy_callback(self, pkt):
         """Callback for each captured packet (runs in Scapy thread).
@@ -854,6 +909,7 @@ class LiveSniffer:
                 if is_intrusion:
                     self.intrusion_count += 1
                     self.stats['intrusion_flows'] += 1
+                    self._check_and_auto_block(src_ip, label)
                     alert_msg = (
                         f"[!] INTRUSION DETECTED: {label} "
                         f"({confidence*100:.1f}% conf) | "
