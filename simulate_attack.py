@@ -29,9 +29,34 @@ def inject_packet(attack_class, confidence, severity):
     # 1. Save to SQLite
     try:
         # Ensure directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        dirname = os.path.dirname(db_path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS TRAFFIC_LOG (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_ip TEXT,
+                destination_ip TEXT,
+                port INTEGER,
+                protocol TEXT,
+                classification TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ALERT (
+                alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER,
+                attack_type TEXT,
+                severity_level TEXT,
+                resolution_status TEXT,
+                generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(log_id) REFERENCES TRAFFIC_LOG(log_id)
+            )
+        ''')
         
         cursor.execute('''
             INSERT INTO TRAFFIC_LOG (source_ip, destination_ip, port, protocol, classification, timestamp) 
@@ -41,9 +66,9 @@ def inject_packet(attack_class, confidence, severity):
         
         if attack_class != "Normal":
             cursor.execute('''
-                INSERT INTO ALERT (log_id, severity_level, resolution_status, generated_at) 
-                VALUES (?, ?, ?, ?)
-            ''', (log_id, severity, "Pending", timestamp))
+                INSERT INTO ALERT (log_id, attack_type, severity_level, resolution_status, generated_at) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (log_id, attack_class, severity, "Pending", timestamp))
             
         conn.commit()
         conn.close()

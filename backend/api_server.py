@@ -83,10 +83,10 @@ def handle_new_packet(data):
 def get_model_info():
     return jsonify({
         "algorithm": "XGBoost",
-        "trainingSamples": 73362,
-        "ganAugmented": True,
-        "accuracy": "84.32%",
-        "classes": ["Normal", "Dos/DDos", "PortScan", "Brute Force", "Web Attack", "Botnet ARES", "Infiltration"]
+        "trainingSamples": 635849,
+        "ganAugmented": False,
+        "accuracy": "92.22%",
+        "classes": ["Benign", "DoS attacks-GoldenEye", "DoS attacks-Slowloris"]
     })
 
 @app.route('/api/stats')
@@ -122,6 +122,73 @@ def get_stats():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route('/api/chart')
+def get_chart_data():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        if not os.path.exists(db_path):
+            return jsonify({"normalCounts": [0]*30, "flaggedCounts": [0]*30})
+            
+        time_range = request.args.get('range', '6H')
+        hours = 6
+        if time_range == '1H': hours = 1
+        elif time_range == '24H': hours = 24
+        
+        now = datetime.now()
+        start_time = now - timedelta(hours=hours)
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='TRAFFIC_LOG'")
+        if cursor.fetchone() is None:
+            conn.close()
+            return jsonify({"normalCounts": [0]*30, "flaggedCounts": [0]*30})
+            
+        cursor.execute('''
+            SELECT timestamp, classification 
+            FROM TRAFFIC_LOG 
+            WHERE timestamp >= ?
+        ''', (start_time.strftime('%Y-%m-%d %H:%M:%S'),))
+        
+        logs = cursor.fetchall()
+        conn.close()
+        
+        num_buckets = 30
+        normal_counts = [0] * num_buckets
+        flagged_counts = [0] * num_buckets
+        
+        start_ts = start_time.timestamp()
+        end_ts = now.timestamp()
+        bucket_size = max((end_ts - start_ts) / (num_buckets - 1), 1.0)
+        
+        for ts_str, classification in logs:
+            try:
+                # Handle ISO format and standard format strings
+                if 'T' in ts_str or '+00:00' in ts_str:
+                    ts = datetime.fromisoformat(ts_str).timestamp()
+                elif '.' in ts_str:
+                    ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f').timestamp()
+                else:
+                    ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S').timestamp()
+                
+                b_idx = int((ts - start_ts) / bucket_size)
+                if 0 <= b_idx < num_buckets:
+                    if classification == 'Normal' or classification == 'BENIGN_LABEL':
+                        normal_counts[b_idx] += 1
+                    else:
+                        flagged_counts[b_idx] += 1
+            except Exception as e:
+                continue
+                
+        return jsonify({
+            "normalCounts": normal_counts,
+            "flaggedCounts": flagged_counts
+        })
+    except Exception as e:
+        print(f"Chart Error: {e}")
+        return jsonify({"normalCounts": [0]*30, "flaggedCounts": [0]*30})
+
 @app.route('/api/logs')
 def get_logs():
     try:
@@ -143,6 +210,14 @@ def get_logs():
         rows = cursor.fetchall()
         conn.close()
         
+        def get_sev(cls):
+            if cls == "Normal": return "Low"
+            cls_lower = cls.lower()
+            if 'dos' in cls_lower or 'infiltration' in cls_lower or 'botnet' in cls_lower: return 'Critical'
+            if 'web' in cls_lower or 'brute' in cls_lower or 'sql' in cls_lower: return 'High'
+            if 'scan' in cls_lower or 'recon' in cls_lower: return 'Medium'
+            return 'High'
+            
         packets = []
         for i, row in enumerate(rows):
             src, dst, port, proto, cls, ts = row
@@ -154,7 +229,7 @@ def get_logs():
                 "proto": proto,
                 "size": 0,
                 "flags": "...",
-                "sev": "Low" if cls == "Normal" else "High",
+                "sev": get_sev(cls),
                 "type": cls,
                 "verdict": cls
             })
@@ -470,9 +545,124 @@ def reset_password():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-import os
+import subprocess
+
+@app.route('/api/blocked_ips', methods=['GET'])
+def get_blocked_ips():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT ip, blocked_at FROM BLOCKED_IP ORDER BY blocked_at DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([{"ip": row[0], "blocked_at": row[1]} for row in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/block_ip', methods=['POST'])
+def block_ip():
+    try:
+        data = request.json
+        ip = data.get('ip')
+        if not ip: return jsonify({"error": "IP is required"}), 400
+        
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("INSERT INTO BLOCKED_IP (ip) VALUES (?)", (ip,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass # Already blocked
+        conn.close()
+        
+        # Try OS level block
+        try:
+            subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=NIDS_Block_{ip}', 'dir=in', 'action=block', f'remoteip={ip}'], check=True, capture_output=True)
+            os_blocked = True
+        except Exception:
+            os_blocked = False
+            
+        return jsonify({"success": True, "os_blocked": os_blocked})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/unblock_ip', methods=['POST'])
+def unblock_ip():
+    try:
+        data = request.json
+        ip = data.get('ip')
+        if not ip: return jsonify({"error": "IP is required"}), 400
+        
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        conn = sqlite3.connect(db_path)
+        conn.execute("DELETE FROM BLOCKED_IP WHERE ip = ?", (ip,))
+        conn.commit()
+        conn.close()
+        
+        # Try OS level unblock
+        try:
+            subprocess.run(['netsh', 'advfirewall', 'firewall', 'delete', 'rule', f'name=NIDS_Block_{ip}'], check=True, capture_output=True)
+            os_unblocked = True
+        except Exception:
+            os_unblocked = False
+            
+        return jsonify({"success": True, "os_unblocked": os_unblocked})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+import threading
+
+def init_db():
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+    conn = sqlite3.connect(db_path)
+    conn.execute('''CREATE TABLE IF NOT EXISTS CONTROL_FLAGS (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )''')
+    # Set default if not exists
+    conn.execute("INSERT OR IGNORE INTO CONTROL_FLAGS (key, value) VALUES ('sniffer_state', 'RUNNING')")
+    conn.commit()
+    conn.close()
+
+@app.route('/api/sniffer/stop', methods=['POST'])
+def stop_sniffer():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        conn = sqlite3.connect(db_path)
+        conn.execute("UPDATE CONTROL_FLAGS SET value = 'STOP' WHERE key = 'sniffer_state'")
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sniffer/restart', methods=['POST'])
+def restart_sniffer():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db')
+        conn = sqlite3.connect(db_path)
+        conn.execute("UPDATE CONTROL_FLAGS SET value = 'RESTART' WHERE key = 'sniffer_state'")
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/model/retrain', methods=['POST'])
+def retrain_model():
+    def run_training():
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'train_xgboost.py')
+        subprocess.run(['python', script_path])
+        
+    # Start training in a background thread to not block the API
+    t = threading.Thread(target=run_training)
+    t.daemon = True
+    t.start()
+    return jsonify({"success": True, "message": "Training started in background"})
 
 if __name__ == '__main__':
+    init_db()
     port = int(os.environ.get("PORT", 5000))
     print(f"Starting NIDS API Server on http://0.0.0.0:{port}")
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

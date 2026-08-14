@@ -205,42 +205,34 @@ class FeaturePreprocessor:
         if 'Protocol' in feature_dict:
             feature_dict['Protocol'] = float(feature_dict['Protocol'])
 
-        # Build final feature array in the SAME ORDER as training
-        # (X has: everything except Source Port, Source IP, Dest IP, Timestamp, target
-        #  and with Destination Port replaced by the 3 port binning columns)
-        # IMPORTANT: Order must EXACTLY match training (PORT_* columns go LAST, at positions 77-79)
-        final_feature_names = [
-            'Protocol', 'Flow Duration',
-            'Total Fwd Packets', 'Total Backward Packets',
-            'Total Length of Fwd Packets', 'Total Length of Bwd Packets',
-            'Fwd Packet Length Max', 'Fwd Packet Length Min',
-            'Fwd Packet Length Mean', 'Fwd Packet Length Std',
-            'Bwd Packet Length Max', 'Bwd Packet Length Min',
-            'Bwd Packet Length Mean', 'Bwd Packet Length Std',
-            'Flow Bytess', 'Flow Packetss',
-            'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min',
-            'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max', 'Fwd IAT Min',
-            'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std', 'Bwd IAT Max', 'Bwd IAT Min',
-            'Fwd PSH Flags', 'Bwd PSH Flags', 'Fwd URG Flags', 'Bwd URG Flags',
-            'Fwd Header Length', 'Bwd Header Length',
-            'Fwd Packetss', 'Bwd Packetss',
-            'Min Packet Length', 'Max Packet Length',
-            'Packet Length Mean', 'Packet Length Std', 'Packet Length Variance',
-            'FIN Flag Count', 'SYN Flag Count', 'RST Flag Count',
-            'PSH Flag Count', 'ACK Flag Count', 'URG Flag Count',
-            'CWE Flag Count', 'ECE Flag Count',
-            'Down Up Ratio', 'Average Packet Size',
-            'Avg Fwd Segment Size', 'Avg Bwd Segment Size',
-            'Fwd Avg Bytes Bulk', 'Fwd Avg Packets Bulk', 'Fwd Avg Bulk Rate',
-            'Bwd Avg Bytes Bulk', 'Bwd Avg Packets Bulk', 'Bwd Avg Bulk Rate',
-            'Subflow Fwd Packets', 'Subflow Fwd Bytes',
-            'Subflow Bwd Packets', 'Subflow Bwd Bytes',
-            'Init_Win_bytes_forward', 'Init_Win_bytes_backward',
-            'act_data_pkt_fwd', 'min_seg_size_forward',
-            'Active Mean', 'Active Std', 'Active Max', 'Active Min',
-            'Idle Mean', 'Idle Std', 'Idle Max', 'Idle Min',
-            'PORT_WELL_KNOWN', 'PORT_REGISTERED', 'PORT_DYNAMIC',
-        ]
+        # Map internal sniffer names to new CSV format names
+        name_map = {
+            'Total Length of Fwd Packets': 'Fwd Packets Length Total',
+            'Total Length of Bwd Packets': 'Bwd Packets Length Total',
+            'Flow Bytess': 'Flow Bytes/s',
+            'Flow Packetss': 'Flow Packets/s',
+            'Fwd Packetss': 'Fwd Packets/s',
+            'Bwd Packetss': 'Bwd Packets/s',
+            'Down Up Ratio': 'Down/Up Ratio',
+            'Average Packet Size': 'Avg Packet Size',
+            'Fwd Avg Bytes Bulk': 'Fwd Avg Bytes/Bulk',
+            'Fwd Avg Packets Bulk': 'Fwd Avg Packets/Bulk',
+            'Fwd Avg Bulk Rate': 'Fwd Avg Bulk Rate',
+            'Bwd Avg Bytes Bulk': 'Bwd Avg Bytes/Bulk',
+            'Bwd Avg Packets Bulk': 'Bwd Avg Packets/Bulk',
+            'Bwd Avg Bulk Rate': 'Bwd Avg Bulk Rate',
+            'Init_Win_bytes_forward': 'Init Fwd Win Bytes',
+            'Init_Win_bytes_backward': 'Init Bwd Win Bytes',
+            'act_data_pkt_fwd': 'Fwd Act Data Packets',
+            'min_seg_size_forward': 'Fwd Seg Size Min',
+            'Min Packet Length': 'Packet Length Min',
+            'Max Packet Length': 'Packet Length Max',
+        }
+        for old_name, new_name in name_map.items():
+            if old_name in feature_dict:
+                feature_dict[new_name] = feature_dict.pop(old_name)
+
+        final_feature_names = ['Protocol', 'Flow Duration', 'Total Fwd Packets', 'Total Backward Packets', 'Fwd Packets Length Total', 'Bwd Packets Length Total', 'Fwd Packet Length Max', 'Fwd Packet Length Min', 'Fwd Packet Length Mean', 'Fwd Packet Length Std', 'Bwd Packet Length Max', 'Bwd Packet Length Min', 'Bwd Packet Length Mean', 'Bwd Packet Length Std', 'Flow Bytes/s', 'Flow Packets/s', 'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min', 'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max', 'Fwd IAT Min', 'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std', 'Bwd IAT Max', 'Bwd IAT Min', 'Fwd PSH Flags', 'Bwd PSH Flags', 'Fwd URG Flags', 'Bwd URG Flags', 'Fwd Header Length', 'Bwd Header Length', 'Fwd Packets/s', 'Bwd Packets/s', 'Packet Length Min', 'Packet Length Max', 'Packet Length Mean', 'Packet Length Std', 'Packet Length Variance', 'FIN Flag Count', 'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count', 'ACK Flag Count', 'URG Flag Count', 'CWE Flag Count', 'ECE Flag Count', 'Down/Up Ratio', 'Avg Packet Size', 'Avg Fwd Segment Size', 'Avg Bwd Segment Size', 'Fwd Avg Bytes/Bulk', 'Fwd Avg Packets/Bulk', 'Fwd Avg Bulk Rate', 'Bwd Avg Bytes/Bulk', 'Bwd Avg Packets/Bulk', 'Bwd Avg Bulk Rate', 'Subflow Fwd Packets', 'Subflow Fwd Bytes', 'Subflow Bwd Packets', 'Subflow Bwd Bytes', 'Init Fwd Win Bytes', 'Init Bwd Win Bytes', 'Fwd Act Data Packets', 'Fwd Seg Size Min', 'Active Mean', 'Active Std', 'Active Max', 'Active Min', 'Idle Mean', 'Idle Std', 'Idle Max', 'Idle Min']
 
         final_values = [float(feature_dict.get(name, 0.0)) for name in final_feature_names]
         arr = self.clean(final_values)
@@ -277,38 +269,34 @@ class FeaturePreprocessor:
             if 'Protocol' in feature_dict:
                 feature_dict['Protocol'] = float(feature_dict['Protocol'])
 
-            final_feature_names = [
-                'Protocol', 'Flow Duration',
-                'Total Fwd Packets', 'Total Backward Packets',
-                'Total Length of Fwd Packets', 'Total Length of Bwd Packets',
-                'Fwd Packet Length Max', 'Fwd Packet Length Min',
-                'Fwd Packet Length Mean', 'Fwd Packet Length Std',
-                'Bwd Packet Length Max', 'Bwd Packet Length Min',
-                'Bwd Packet Length Mean', 'Bwd Packet Length Std',
-                'Flow Bytess', 'Flow Packetss',
-                'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min',
-                'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max', 'Fwd IAT Min',
-                'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std', 'Bwd IAT Max', 'Bwd IAT Min',
-                'Fwd PSH Flags', 'Bwd PSH Flags', 'Fwd URG Flags', 'Bwd URG Flags',
-                'Fwd Header Length', 'Bwd Header Length',
-                'Fwd Packetss', 'Bwd Packetss',
-                'Min Packet Length', 'Max Packet Length',
-                'Packet Length Mean', 'Packet Length Std', 'Packet Length Variance',
-                'FIN Flag Count', 'SYN Flag Count', 'RST Flag Count',
-                'PSH Flag Count', 'ACK Flag Count', 'URG Flag Count',
-                'CWE Flag Count', 'ECE Flag Count',
-                'Down Up Ratio', 'Average Packet Size',
-                'Avg Fwd Segment Size', 'Avg Bwd Segment Size',
-                'Fwd Avg Bytes Bulk', 'Fwd Avg Packets Bulk', 'Fwd Avg Bulk Rate',
-                'Bwd Avg Bytes Bulk', 'Bwd Avg Packets Bulk', 'Bwd Avg Bulk Rate',
-                'Subflow Fwd Packets', 'Subflow Fwd Bytes',
-                'Subflow Bwd Packets', 'Subflow Bwd Bytes',
-                'Init_Win_bytes_forward', 'Init_Win_bytes_backward',
-                'act_data_pkt_fwd', 'min_seg_size_forward',
-                'Active Mean', 'Active Std', 'Active Max', 'Active Min',
-                'Idle Mean', 'Idle Std', 'Idle Max', 'Idle Min',
-                'PORT_WELL_KNOWN', 'PORT_REGISTERED', 'PORT_DYNAMIC',
-            ]
+            # Map internal sniffer names to new CSV format names
+            name_map = {
+                'Total Length of Fwd Packets': 'Fwd Packets Length Total',
+                'Total Length of Bwd Packets': 'Bwd Packets Length Total',
+                'Flow Bytess': 'Flow Bytes/s',
+                'Flow Packetss': 'Flow Packets/s',
+                'Fwd Packetss': 'Fwd Packets/s',
+                'Bwd Packetss': 'Bwd Packets/s',
+                'Down Up Ratio': 'Down/Up Ratio',
+                'Average Packet Size': 'Avg Packet Size',
+                'Fwd Avg Bytes Bulk': 'Fwd Avg Bytes/Bulk',
+                'Fwd Avg Packets Bulk': 'Fwd Avg Packets/Bulk',
+                'Fwd Avg Bulk Rate': 'Fwd Avg Bulk Rate',
+                'Bwd Avg Bytes Bulk': 'Bwd Avg Bytes/Bulk',
+                'Bwd Avg Packets Bulk': 'Bwd Avg Packets/Bulk',
+                'Bwd Avg Bulk Rate': 'Bwd Avg Bulk Rate',
+                'Init_Win_bytes_forward': 'Init Fwd Win Bytes',
+                'Init_Win_bytes_backward': 'Init Bwd Win Bytes',
+                'act_data_pkt_fwd': 'Fwd Act Data Packets',
+                'min_seg_size_forward': 'Fwd Seg Size Min',
+                'Min Packet Length': 'Packet Length Min',
+                'Max Packet Length': 'Packet Length Max',
+            }
+            for old_name, new_name in name_map.items():
+                if old_name in feature_dict:
+                    feature_dict[new_name] = feature_dict.pop(old_name)
+
+            final_feature_names = ['Protocol', 'Flow Duration', 'Total Fwd Packets', 'Total Backward Packets', 'Fwd Packets Length Total', 'Bwd Packets Length Total', 'Fwd Packet Length Max', 'Fwd Packet Length Min', 'Fwd Packet Length Mean', 'Fwd Packet Length Std', 'Bwd Packet Length Max', 'Bwd Packet Length Min', 'Bwd Packet Length Mean', 'Bwd Packet Length Std', 'Flow Bytes/s', 'Flow Packets/s', 'Flow IAT Mean', 'Flow IAT Std', 'Flow IAT Max', 'Flow IAT Min', 'Fwd IAT Total', 'Fwd IAT Mean', 'Fwd IAT Std', 'Fwd IAT Max', 'Fwd IAT Min', 'Bwd IAT Total', 'Bwd IAT Mean', 'Bwd IAT Std', 'Bwd IAT Max', 'Bwd IAT Min', 'Fwd PSH Flags', 'Bwd PSH Flags', 'Fwd URG Flags', 'Bwd URG Flags', 'Fwd Header Length', 'Bwd Header Length', 'Fwd Packets/s', 'Bwd Packets/s', 'Packet Length Min', 'Packet Length Max', 'Packet Length Mean', 'Packet Length Std', 'Packet Length Variance', 'FIN Flag Count', 'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count', 'ACK Flag Count', 'URG Flag Count', 'CWE Flag Count', 'ECE Flag Count', 'Down/Up Ratio', 'Avg Packet Size', 'Avg Fwd Segment Size', 'Avg Bwd Segment Size', 'Fwd Avg Bytes/Bulk', 'Fwd Avg Packets/Bulk', 'Fwd Avg Bulk Rate', 'Bwd Avg Bytes/Bulk', 'Bwd Avg Packets/Bulk', 'Bwd Avg Bulk Rate', 'Subflow Fwd Packets', 'Subflow Fwd Bytes', 'Subflow Bwd Packets', 'Subflow Bwd Bytes', 'Init Fwd Win Bytes', 'Init Bwd Win Bytes', 'Fwd Act Data Packets', 'Fwd Seg Size Min', 'Active Mean', 'Active Std', 'Active Max', 'Active Min', 'Idle Mean', 'Idle Std', 'Idle Max', 'Idle Min']
             final_values = [float(feature_dict.get(name, 0.0)) for name in final_feature_names]
             all_final_values.append(final_values)
 
@@ -405,6 +393,7 @@ class AlertLogger:
                     alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     log_id INTEGER NOT NULL,
                     user_id INTEGER,
+                    attack_type TEXT,
                     severity_level TEXT,
                     resolution_status TEXT DEFAULT 'Open',
                     generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -449,12 +438,24 @@ class AlertLogger:
         is_intrusion = prediction != BENIGN_LABEL
         sev = "Low"
         if is_intrusion:
-            if prediction in ['Dos/DDos', 'Infiltration', 'Botnet ARES']:
+            pred_lower = prediction.lower()
+            if 'dos' in pred_lower or 'infiltration' in pred_lower or 'botnet' in pred_lower:
                 sev = 'Critical'
-            elif prediction in ['Web Attack', 'Brute Force']:
+            elif 'web' in pred_lower or 'brute' in pred_lower or 'sql' in pred_lower:
                 sev = 'High'
-            elif prediction == 'PortScan':
+            elif 'scan' in pred_lower or 'recon' in pred_lower:
                 sev = 'Medium'
+            else:
+                sev = 'High'
+        
+        flags_list = []
+        if getattr(features, 'FIN_Flag_Count', 0) > 0: flags_list.append('FIN')
+        if getattr(features, 'SYN_Flag_Count', 0) > 0: flags_list.append('SYN')
+        if getattr(features, 'RST_Flag_Count', 0) > 0: flags_list.append('RST')
+        if getattr(features, 'PSH_Flag_Count', 0) > 0: flags_list.append('PSH')
+        if getattr(features, 'ACK_Flag_Count', 0) > 0: flags_list.append('ACK')
+        if getattr(features, 'URG_Flag_Count', 0) > 0: flags_list.append('URG')
+        flags_str = ", ".join(flags_list) if flags_list else "None"
         
         packet_data = {
             "timestamp": timestamp,
@@ -468,7 +469,9 @@ class AlertLogger:
             "length": total_bytes,
             "latencyMs": (flow_duration / 1000.0), # approx inference/latency representation
             "sev": sev,
-            "type": prediction
+            "type": prediction,
+            "flags": flags_str,
+            "num_packets": num_packets
         }
         
         self.alert_queue.put({
@@ -551,10 +554,10 @@ class AlertLogger:
                         severity = "High" if item['confidence'] > 0.9 else "Medium"
                         cursor.execute('''
                             INSERT INTO ALERT (
-                                log_id, severity_level, resolution_status, generated_at
-                            ) VALUES (?, ?, ?, ?)
+                                log_id, attack_type, severity_level, resolution_status, generated_at
+                            ) VALUES (?, ?, ?, ?, ?)
                         ''', (
-                            log_id, severity, "Open", item['timestamp']
+                            log_id, item['prediction'], severity, "Open", item['timestamp']
                         ))
                 self.conn.commit()
             except Exception as e:
@@ -609,10 +612,14 @@ class NIDSClassifier:
         probas = self.model.predict_proba(X_scaled)[0]
         predicted_idx = int(np.argmax(probas))
         predicted_label = self.class_names[predicted_idx]
+        if predicted_label == "Benign":
+            predicted_label = "Normal"
         confidence = float(probas[predicted_idx])
         
         # Apply strict confidence threshold to prevent false positives on loopback/internet traffic
-        if predicted_label != BENIGN_LABEL and confidence < 0.95:
+        if predicted_label == 'Dos/DDos' and confidence < 0.99:
+            predicted_label = BENIGN_LABEL
+        elif predicted_label != BENIGN_LABEL and confidence < 0.95:
             predicted_label = BENIGN_LABEL
             
         return predicted_label, confidence, probas
@@ -636,10 +643,14 @@ class NIDSClassifier:
         
         for i, idx in enumerate(predicted_indices):
             label = self.class_names[idx]
+            if label == "Benign":
+                label = "Normal"
             conf = float(probas_batch[i][idx])
             
-            # Apply strict confidence threshold
-            if label != BENIGN_LABEL and conf < 0.95:
+            # Apply strict confidence threshold to reduce false positives
+            if label == 'Dos/DDos' and conf < 0.99:
+                label = BENIGN_LABEL
+            elif label != BENIGN_LABEL and conf < 0.95:
                 label = BENIGN_LABEL
                 
             predicted_labels.append(label)
@@ -686,6 +697,9 @@ class LiveSniffer:
             'classification_time_ms': [],
             'recent_alerts': deque(maxlen=20),
         }
+        
+        self.blacklist = set()
+        self.last_blacklist_refresh = 0
 
         # Removed Socket.IO from LiveSniffer; it's handled completely by AlertLogger
 
@@ -700,7 +714,24 @@ class LiveSniffer:
                 return
 
             ip_layer = pkt[IPLayer]
-            timestamp = pkt.time if hasattr(pkt, 'time') else time.time()
+            
+            # Periodically refresh blacklist (every 5 seconds)
+            current_time = time.time()
+            if current_time - self.last_blacklist_refresh > 5:
+                self.last_blacklist_refresh = current_time
+                try:
+                    conn = sqlite3.connect(ALERT_DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT ip FROM BLOCKED_IP")
+                    self.blacklist = set(row[0] for row in cursor.fetchall())
+                    conn.close()
+                except Exception:
+                    pass
+            
+            if ip_layer.src in self.blacklist or ip_layer.dst in self.blacklist:
+                return
+                
+            timestamp = pkt.time if hasattr(pkt, 'time') else current_time
 
             # Determine protocol
             if pkt.haslayer(TCP):
@@ -786,8 +817,18 @@ class LiveSniffer:
                 # Apply confidence threshold
                 if confidence < 0.50:
                     label = BENIGN_LABEL
-
+                    
                 src_ip, src_port, dst_ip, dst_port, proto = flow_key
+                
+                # Heuristic to eliminate false positives for DoS
+                if label == 'Dos/DDos':
+                    total_pkts = features.Total_Fwd_Packets + features.Total_Backward_Packets
+                    # Real DoS attacks have many packets. Background web browsing does not.
+                    if total_pkts < 20:
+                        label = BENIGN_LABEL
+                    # Whitelist common Google/Cloud subnets that trigger false positives during normal browsing
+                    elif dst_ip.startswith(('142.', '34.', '172.217', '104.', '166.', '23.')):
+                        label = BENIGN_LABEL
                 
                 flow_info = {
                     'src_ip': src_ip, 'dst_ip': dst_ip,
@@ -838,6 +879,21 @@ class LiveSniffer:
         """Background thread that periodically checks for ready flows."""
         while self.running:
             try:
+                # Poll the database for control flags
+                try:
+                    conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nids.db'))
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM CONTROL_FLAGS WHERE key = 'sniffer_state'")
+                    row = cursor.fetchone()
+                    conn.close()
+                    
+                    if row and row[0] in ['STOP', 'RESTART']:
+                        logger.warning(f"Received {row[0]} signal from API. Stopping capture...")
+                        self.running = False
+                        break
+                except Exception as db_e:
+                    pass
+
                 with self.lock:
                     self._process_ready_flows()
                     # Cleanup stale flows every 60 seconds
@@ -845,7 +901,7 @@ class LiveSniffer:
                         self.flow_collector.cleanup_stale_flows()
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
-            time.sleep(1.0)  # Check every second
+            time.sleep(2.0)  # Check every two seconds
 
     def print_banner(self):
         """Display startup banner."""
@@ -922,6 +978,9 @@ class LiveSniffer:
         monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         monitor_thread.start()
 
+        def stop_check(pkt):
+            return not self.running
+
         try:
             # Start Scapy sniffing (blocking)
             scapy.sniff(
@@ -929,6 +988,7 @@ class LiveSniffer:
                 prn=self._scapy_callback,
                 store=False,  # Don't store packets in memory
                 filter=None,  # Capture all traffic
+                stop_filter=stop_check,
             )
         except PermissionError:
             logger.error(

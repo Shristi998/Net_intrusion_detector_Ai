@@ -1,7 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 export default function Overview({ stats, packets, alerts, modelInfo }) {
   const [timeRange, setTimeRange] = useState('6H');
+  const [chartData, setChartData] = useState({ normalCounts: Array(30).fill(0), flaggedCounts: Array(30).fill(0) });
+
+  useEffect(() => {
+    fetch(`http://localhost:5000/api/chart?range=${timeRange}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.normalCounts && data.flaggedCounts) {
+          setChartData(data);
+        }
+      })
+      .catch(err => console.error("Chart fetch error:", err));
+  }, [timeRange]);
 
   const now = Date.now();
   const getFilterTime = () => {
@@ -74,25 +86,10 @@ export default function Overview({ stats, packets, alerts, modelInfo }) {
     ? { background: 'var(--bg-panel-alt)' }
     : { background: `conic-gradient(var(--critical) 0% ${p1}%, var(--warn) ${p1}% ${p2}%, var(--info) ${p2}% ${p3}%, var(--violet) ${p3}% ${p4}%, var(--signal) ${p4}% 100%)` };
 
-  // Calculate Chart Points dynamically
-  const numBuckets = 14;
-  const start = getFilterTime();
-  const bucketSize = Math.max((now - start) / (numBuckets - 1), 1000);
-  
-  const normalCounts = Array(numBuckets).fill(0);
-  const flaggedCounts = Array(numBuckets).fill(0);
-
-  filteredPackets.forEach(p => {
-    const t = new Date(p.time || p.timestamp || Date.now()).getTime();
-    const bIdx = Math.floor((t - start) / bucketSize);
-    if (bIdx >= 0 && bIdx < numBuckets) {
-      if ((p.verdict && p.verdict !== 'Normal') || (p.type && p.type !== 'Normal')) {
-        flaggedCounts[bIdx]++;
-      } else {
-        normalCounts[bIdx]++;
-      }
-    }
-  });
+  // Use fetched chart data from backend
+  const numBuckets = 30;
+  const normalCounts = chartData.normalCounts;
+  const flaggedCounts = chartData.flaggedCounts;
 
   const maxCount = Math.max(...normalCounts, ...flaggedCounts, 10);
   const scaleY = (val) => 180 - (val / maxCount) * 140; // Max Y is 40, Min Y is 180
@@ -234,9 +231,9 @@ export default function Overview({ stats, packets, alerts, modelInfo }) {
                   <td>{p.proto === 6 ? 'TCP' : p.proto === 17 ? 'UDP' : p.proto}</td>
                   <td>
                     {p.verdict === 'Normal' ? (
-                      <span className="badge normal">NORMAL</span>
+                      <span className="badge sev-low">NORMAL</span>
                     ) : (
-                      <span className="badge threat">{p.verdict.toUpperCase()}</span>
+                      <span className={`badge sev-${p.sev ? p.sev.toLowerCase() : 'high'}`}>{p.verdict.toUpperCase()}</span>
                     )}
                   </td>
                   <td>{p.time.toLocaleTimeString()}</td>

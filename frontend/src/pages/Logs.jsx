@@ -15,11 +15,11 @@ export default function Logs({ packets }) {
                 <td>{p.size || 0}</td>
                 <td>{p.proto === 6 ? 'TCP' : p.proto === 17 ? 'UDP' : p.proto}</td>
                 <td>
-                  {p.verdict === 'Normal' ? (
-                    <span className="badge normal">NORMAL</span>
-                  ) : (
-                    <span className="badge threat">{p.verdict.toUpperCase()}</span>
-                  )}
+                    {p.verdict === 'Normal' ? (
+                      <span className="badge sev-low">NORMAL</span>
+                    ) : (
+                      <span className={`badge sev-${p.sev ? p.sev.toLowerCase() : 'high'}`}>{p.verdict.toUpperCase()}</span>
+                    )}
                 </td>
                 <td>{p.time.toLocaleTimeString()}</td>
               </tr>

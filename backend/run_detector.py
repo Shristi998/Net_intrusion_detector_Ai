@@ -92,39 +92,78 @@ def main():
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     csv_output = args.output or os.path.join(PROJECT_ROOT, 'logs', 'alerts.csv')
 
-    print(f"{_CYAN}[*]{_RESET} Initializing NIDS live detection system...")
-    print(f"{_CYAN}[*]{_RESET} Model:      {model_path}")
-    print(f"{_CYAN}[*]{_RESET} Alert DB:   {db_path}")
-    print(f"{_CYAN}[*]{_RESET} Alert CSV:  {csv_output}")
-    print()
+    import time
+    import sqlite3
+    
+    def get_sniffer_state():
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM CONTROL_FLAGS WHERE key = 'sniffer_state'")
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else 'RUNNING'
+        except Exception:
+            return 'RUNNING'
 
-    # Load classifier (model + scaler + label encoder)
-    classifier = NIDSClassifier(model_path, scaler_path, labels_path, proto_encoder_path)
-
-    # Set up alert logger
-    alert_logger = AlertLogger(
-        db_path=db_path,
-        csv_path=csv_output if args.output else None,
-        save_to_db=not args.no_save,
-    )
-
-    # Create and start the sniffer
-    sniffer = LiveSniffer(
-        classifier=classifier,
-        alert_logger=alert_logger,
-        interface=args.interface,
-        count=args.count,
-        alert_only=args.alert_only,
-        pcap_file=args.pcap,
-    )
-
-    try:
-        sniffer.start()
-    except KeyboardInterrupt:
-        print(f"\n{_YELLOW}[!] Detector stopped by user.{_RESET}")
-    except Exception as e:
-        print(f"\n{_RED}[!] Detector error: {e}{_RESET}")
-        sys.exit(1)
+    while True:
+        state = get_sniffer_state()
+        if state == 'STOP':
+            print(f"{_YELLOW}[*] Sniffer is stopped via API. Waiting for restart...{_RESET}", end='\r')
+            time.sleep(3)
+            continue
+            
+        print(f"\n{_CYAN}[*]{_RESET} Initializing NIDS live detection system...")
+        print(f"{_CYAN}[*]{_RESET} Model:      {model_path}")
+        print(f"{_CYAN}[*]{_RESET} Alert DB:   {db_path}")
+        print(f"{_CYAN}[*]{_RESET} Alert CSV:  {csv_output}")
+        print()
+    
+        # Load classifier (model + scaler + label encoder)
+        classifier = NIDSClassifier(model_path, scaler_path, labels_path, proto_encoder_path)
+    
+        # Set up alert logger
+        alert_logger = AlertLogger(
+            db_path=db_path,
+            csv_path=csv_output if args.output else None,
+            save_to_db=not args.no_save,
+        )
+    
+        # Create and start the sniffer
+        sniffer = LiveSniffer(
+            classifier=classifier,
+            alert_logger=alert_logger,
+            interface=args.interface,
+            count=args.count,
+            alert_only=args.alert_only,
+            pcap_file=args.pcap,
+        )
+    
+        try:
+            sniffer.start()
+        except KeyboardInterrupt:
+            print(f"\n{_YELLOW}[!] Detector stopped by user.{_RESET}")
+            break
+        except Exception as e:
+            print(f"\n{_RED}[!] Detector error: {e}{_RESET}")
+            sys.exit(1)
+            
+        state = get_sniffer_state()
+        if state == 'RESTART':
+            try:
+                conn = sqlite3.connect(db_path)
+                conn.execute("UPDATE CONTROL_FLAGS SET value = 'RUNNING' WHERE key = 'sniffer_state'")
+                conn.commit()
+                conn.close()
+            except Exception: pass
+            print(f"\n{_YELLOW}[!] Restarting sniffer...{_RESET}")
+            time.sleep(2)
+            continue
+        elif state == 'STOP':
+            print(f"\n{_YELLOW}[!] Sniffer stopped via API.{_RESET}")
+            continue
+        else:
+            break
 
 
 if __name__ == '__main__':

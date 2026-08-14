@@ -14,11 +14,39 @@ import { io } from "socket.io-client";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 export default function Home({ user, onLogout, theme, toggleTheme }) {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTabState] = useState(() => {
+    return window.location.hash.replace('#', '') || 'overview';
+  });
+
+  const setActiveTab = (tab) => {
+    window.location.hash = tab;
+  };
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setActiveTabState(window.location.hash.replace('#', '') || 'overview');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
   const [livePackets, setLivePackets] = useState([]);
   const [liveAlerts, setLiveAlerts] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    const handleToast = (e) => {
+      const id = Date.now() + Math.random();
+      setToasts(prev => [...prev, { id, ...e.detail }]);
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, 5000);
+    };
+    window.addEventListener('toast', handleToast);
+    return () => window.removeEventListener('toast', handleToast);
+  }, []);
   const [stats, setStats] = useState({
     totalAnalyzed: 0,
     threatsFound: 0,
@@ -136,6 +164,11 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
           severity: severity,
           srcIp: data.src,
           destIp: data.dst,
+          sport: data.sport || 'N/A',
+          dport: data.dport || 'N/A',
+          proto: data.proto || 'Unknown',
+          flags: data.flags || '...',
+          packets: data.num_packets || 'Unknown',
         };
         setLiveAlerts(prev => [newAlert, ...prev].slice(0, 100));
       }
@@ -149,7 +182,11 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
     return () => socket.disconnect();
   }, []);
 
-  const activeAlertsCount = liveAlerts.length;
+  const markAlertAsRead = (id) => {
+    setLiveAlerts(prev => prev.map(a => a.id === id ? { ...a, isRead: true } : a));
+  };
+
+  const activeAlertsCount = liveAlerts.filter(a => !a.isRead).length;
   const userName = user ? `${user.firstName} ${user.lastName}` : 'Admin User';
   const userInitials = user?.firstName?.[0] || 'A';
   const userRole = user?.role || 'Security Analyst';
@@ -157,7 +194,7 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
   return (
     <div className="shell">
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${!isSidebarOpen ? 'collapsed' : ''}`}>
         <div className="brand">
           <div className="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 6v6c0 5.2 3.6 9.9 9 11 5.4-1.1 9-5.8 9-11V6l-9-4z" stroke="#0A0D14" strokeWidth="1.9"/></svg></div>
           <div className="brand-text">NIDS console<span>XGB_ENGINE // V1</span></div>
@@ -209,7 +246,12 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
       {/* Main / topbar */}
       <div className="main">
         <div className="topbar">
-          <div className="status-pill"><span className="dot"></span>Sniffer running</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div className="icon-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)} title="Toggle sidebar">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </div>
+            <div className="status-pill"><span className="dot"></span>Sniffer running</div>
+          </div>
           <div className="topbar-right">
             <div className="search-box">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4E5872" strokeWidth="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.6" y2="16.6"/></svg>
@@ -224,42 +266,64 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
             </div>
             <div className="icon-btn" style={{ position: 'relative' }} onClick={() => setShowNotifications(!showNotifications)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
-              {activeAlertsCount > 0 && <span className="ping"></span>}
-              {showNotifications && (
-                <div className="notifications-dropdown">
-                  <div className="notifications-header">Recent Alerts</div>
-                  <div className="notifications-list">
+              {activeAlertsCount > 0 && <span className="ping"></span>}              {showNotifications && (
+                <div className="notifications-dropdown" style={{
+                  position: 'absolute', top: '48px', right: '-8px', width: '380px',
+                  background: 'var(--bg-panel)', border: '1px solid var(--border-soft)',
+                  borderRadius: '12px', boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+                  overflow: 'hidden', zIndex: 100, display: 'flex', flexDirection: 'column'
+                }}>
+                  <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-soft)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600' }}>Recent Alerts</div>
+                    {activeAlertsCount > 0 && <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--admin-red)', background: 'rgba(242,85,90,0.1)', padding: '3px 8px', borderRadius: '5px' }}>{activeAlertsCount} New</div>}
+                  </div>
+                  <div className="notifications-list" style={{ maxHeight: '380px', overflowY: 'auto' }}>
                     {liveAlerts.length === 0 ? (
-                      <div className="notification-empty">No new alerts</div>
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-faint)', fontSize: '13px' }}>No new alerts</div>
                     ) : (
                       liveAlerts.slice(0, 5).map((alert, i) => {
                         const type = alert.type || alert.threat_class || 'Anomaly Detected';
                         const srcIp = alert.srcIp || alert.src_ip || 'Unknown';
                         const dstIp = alert.destIp || alert.dst_ip || 'Unknown';
+                        const sport = alert.sport || 'N/A';
+                        const dport = alert.dport || 'N/A';
+                        const flags = alert.flags || '...';
                         const sev = alert.severity || alert.sev || 'Low';
-                        const time = alert.time || alert.timestamp || new Date().toLocaleTimeString();
                         
-                        let colorVar = '--warn';
-                        if (sev.toLowerCase() === 'critical') colorVar = '--critical';
-                        else if (sev.toLowerCase() === 'high') colorVar = '--critical';
-                        else if (sev.toLowerCase() === 'medium') colorVar = '--warn';
-                        else if (sev.toLowerCase() === 'low') colorVar = '--info';
+                        let timeStr = alert.time || alert.timestamp || new Date().toISOString();
+                        try {
+                          const dt = new Date(timeStr);
+                          timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        } catch(e) {}
+                        
+                        let colorVar = '--admin-amber';
+                        if (sev.toLowerCase() === 'critical' || sev.toLowerCase() === 'high') colorVar = '--admin-red';
+                        else if (sev.toLowerCase() === 'low') colorVar = '--admin-blue';
                         
                         return (
-                          <div key={i} className="notification-item">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                <div className="notif-title" style={{ color: `var(${colorVar})`, marginBottom: 0 }}>{type}</div>
-                                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>{time.split(' ')[1] || time}</span>
+                          <div key={i} style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-soft)', display: 'flex', gap: '14px', alignItems: 'flex-start', cursor: 'pointer', transition: 'background 0.2s' }} onMouseEnter={(e)=>e.currentTarget.style.background='var(--bg-hover)'} onMouseLeave={(e)=>e.currentTarget.style.background='transparent'} onClick={() => { setActiveTab('alerts'); setShowNotifications(false); }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `rgba(var(${colorVar}-rgb, 242,85,90), 0.1)`, color: `var(${colorVar})` }}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                             </div>
-                            <div className="notif-desc">{srcIp} <span style={{color: 'var(--text-tertiary)'}}>→</span> {dstIp}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                <div style={{ fontSize: '13.5px', fontWeight: '600', color: `var(${colorVar})` }}>{type}</div>
+                                <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{timeStr}</div>
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-primary)', marginBottom: '4px', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>{srcIp}<span style={{color: 'var(--text-dim)'}}>:{sport}</span></span>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" strokeWidth="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+                                <span>{dstIp}<span style={{color: 'var(--text-dim)'}}>:{dport}</span></span>
+                              </div>
+                            </div>
                           </div>
                         );
                       })
                     )}
                   </div>
-                  {liveAlerts.length > 5 && (
-                    <div className="notifications-footer" onClick={() => setActiveTab('alerts')}>View all alerts</div>
-                  )}
+                  <div style={{ padding: '14px', textAlign: 'center', borderTop: '1px solid var(--border-soft)', fontSize: '12.5px', fontWeight: '600', color: 'var(--admin-green)', cursor: 'pointer', transition: 'color 0.2s' }} onMouseEnter={(e)=>e.target.style.color='#4ade80'} onMouseLeave={(e)=>e.target.style.color='var(--admin-green)'} onClick={() => { setActiveTab('alerts'); setShowNotifications(false); }}>
+                    View all alerts
+                  </div>
                 </div>
               )}
             </div>
@@ -282,7 +346,7 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
 
         <div className="content">
           {activeTab === 'overview' && <Overview stats={stats} packets={livePackets} alerts={liveAlerts} modelInfo={modelInfo} />}
-          {activeTab === 'alerts' && <Alerts alerts={liveAlerts} />}
+          {activeTab === 'alerts' && <Alerts alerts={liveAlerts} markAlertAsRead={markAlertAsRead} />}
           {activeTab === 'traffic' && <Logs packets={livePackets} />}
           {activeTab === 'intel' && <Intel />}
           {activeTab === 'reports' && <Reports />}
@@ -292,6 +356,42 @@ export default function Home({ user, onLogout, theme, toggleTheme }) {
           {activeTab === 'admin' && <Settings modelInfo={modelInfo} />}
         </div>
       </div>
+      
+      {/* Global Toast Container */}
+      <div style={{ position: 'fixed', bottom: '24px', right: '24px', display: 'flex', flexDirection: 'column', gap: '10px', zIndex: 9999 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ 
+            background: 'var(--bg-panel)', 
+            border: `1px solid ${t.type === 'error' ? 'var(--critical)' : t.type === 'warning' ? 'var(--warn)' : 'var(--signal)'}`, 
+            borderLeft: `4px solid ${t.type === 'error' ? 'var(--critical)' : t.type === 'warning' ? 'var(--warn)' : 'var(--signal)'}`,
+            padding: '16px 20px', 
+            borderRadius: '8px', 
+            boxShadow: '0 10px 30px rgba(0,0,0,0.5)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '12px',
+            animation: 'slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+            minWidth: '300px',
+            color: 'var(--text-primary)'
+          }}>
+            {t.type === 'error' ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--critical)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            ) : t.type === 'warning' ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--signal)" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '14px', fontWeight: '600' }}>{t.type === 'error' ? 'Error' : t.type === 'warning' ? 'Warning' : 'Success'}</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>{t.message}</div>
+            </div>
+            <button onClick={() => setToasts(prev => prev.filter(toast => toast.id !== t.id))} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        ))}
+      </div>
+      
     </div>
   );
 }

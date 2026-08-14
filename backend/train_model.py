@@ -36,9 +36,10 @@ def main():
     parser.add_argument('--phase', choices=['all', 'feature', 'gan', 'xgboost'], default='all',
                         help="Phase to run: 'feature', 'gan', 'xgboost', or 'all'")
     parser.add_argument('--skip-gan', action='store_true', help='Skip GAN augmentation')
+    parser.add_argument('--csv', type=str, default=None, help='Path to custom dataset CSV')
     args = parser.parse_args()
 
-    CSV_PATH = os.path.join(PROJECT_ROOT, "others", "Data", "raw", "IDS2025.csv")
+    CSV_PATH = args.csv if args.csv else os.path.join(PROJECT_ROOT, "others", "Data", "raw", "IDS2025.csv")
 
     # ============================================================
     #  PHASE 1: FEATURE ENGINEERING

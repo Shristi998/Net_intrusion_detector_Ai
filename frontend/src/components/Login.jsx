@@ -24,7 +24,7 @@ export default function Login({ onLogin, theme, toggleTheme }) {
     e.preventDefault();
     setError('');
 
-    if (password.length > 0) {
+    if ((isRegistering || isResetting) && password.length > 0) {
       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%]).{8,}$/;
       if (!passwordRegex.test(password)) {
         setError('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character (!@#$%).');
@@ -545,7 +545,7 @@ export default function Login({ onLogin, theme, toggleTheme }) {
               </>
             )}
 
-            <button type="submit" className="submit-btn" disabled={loading}>
+            <button type="submit" className="submit-btn" disabled={loading || (!isVerifyingCode && password.length < 8)}>
               {loading ? 'Processing...' : (isVerifyingCode ? 'Verify & Submit' : (isResetting ? 'Send Reset Code' : (isRegistering ? 'Send Verification Code' : 'Login')))}
             </button>
 
