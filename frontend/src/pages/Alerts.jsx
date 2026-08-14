@@ -1,152 +1,143 @@
-import React, { useState } from 'react';
-import { Search, Trash2, AlertTriangle, ShieldAlert, Filter } from 'lucide-react';
+import React, { useState } from "react";
 
-export default function Alerts({ alerts = [], onClearAlerts }) {
-  const [selectedSev, setSelectedSev] = useState('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+export default function Alerts({ alerts, markAlertAsRead }) {
+  const [filter, setFilter] = useState('All');
+  const [expandedId, setExpandedId] = useState(null);
 
-  const getBadgeStyle = (sev) => {
-    const s = (sev || 'High').toLowerCase();
-    if (s === 'critical') {
-      return { bg: 'var(--bg-danger)', text: 'var(--text-danger)', border: 'rgba(239, 68, 68, 0.4)' };
-    } else if (s === 'high') {
-      return { bg: 'rgba(239, 68, 68, 0.1)', text: 'var(--text-danger)', border: 'rgba(239, 68, 68, 0.25)' };
-    } else if (s === 'medium') {
-      return { bg: 'var(--bg-warning)', text: 'var(--text-warning)', border: 'rgba(245, 158, 11, 0.3)' };
-    } else {
-      return { bg: 'var(--surface-3)', text: 'var(--text-secondary)', border: 'var(--border)' };
+  const dosCount = alerts.filter(a => a.type === 'Dos/DDos' || a.type === 'Dos/DDoS').length;
+  const portScanCount = alerts.filter(a => a.type === 'PortScan').length;
+  const bruteCount = alerts.filter(a => a.type === 'Brute Force').length;
+  const webCount = alerts.filter(a => a.type === 'Web Attack').length;
+  const otherCount = alerts.length - (dosCount + portScanCount + bruteCount + webCount);
+
+  const filteredAlerts = alerts.filter(a => {
+    if (filter === 'All') return true;
+    if (filter === 'Dos/DDoS') return a.type === 'Dos/DDos' || a.type === 'Dos/DDoS';
+    if (filter === 'PortScan') return a.type === 'PortScan';
+    if (filter === 'Brute Force') return a.type === 'Brute Force';
+    if (filter === 'Web Attack') return a.type === 'Web Attack';
+    if (filter === 'Other') return !['Dos/DDos', 'Dos/DDoS', 'PortScan', 'Brute Force', 'Web Attack'].includes(a.type);
+    return true;
+  });
+
+  const handleAlertClick = (id) => {
+    if (markAlertAsRead) markAlertAsRead(id);
+    setExpandedId(prev => prev === id ? null : id);
+  };
+
+  const handleBlockIp = async (ip) => {
+    try {
+      const BACKEND_URL = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+      const res = await fetch(`${BACKEND_URL}/api/block_ip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip })
+      });
+      const data = await res.json();
+      if (data.success) {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { message: `Successfully blocked ${ip}${data.os_blocked ? ' at OS Firewall level' : ' at Application level'}.`, type: 'success' } }));
+      } else {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { message: `Failed to block: ${data.error}`, type: 'error' } }));
+      }
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent('toast', { detail: { message: "Error blocking IP. Please check connection.", type: 'error' } }));
     }
   };
 
-  const criticalCount = alerts.filter(a => (a.severity || '').toLowerCase() === 'critical').length;
-  const highCount = alerts.filter(a => (a.severity || '').toLowerCase() === 'high').length;
-  const mediumCount = alerts.filter(a => (a.severity || '').toLowerCase() === 'medium').length;
-  const lowCount = alerts.filter(a => (a.severity || '').toLowerCase() === 'low').length;
-
-  const filteredAlerts = alerts.filter(alert => {
-    const matchSev = selectedSev === 'ALL' || (alert.severity || '').toUpperCase() === selectedSev;
-    const q = searchQuery.toLowerCase();
-    const matchQuery = !q || 
-      (alert.type || '').toLowerCase().includes(q) || 
-      (alert.srcIp || '').toLowerCase().includes(q) || 
-      (alert.destIp || '').toLowerCase().includes(q) ||
-      (alert.id || '').toLowerCase().includes(q);
-    return matchSev && matchQuery;
-  });
-
   return (
-    <div style={{ animation: "fadeIn 0.3s ease" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <div>
-          <p style={{ fontSize: "16px", fontWeight: "600", margin: "0 0 2px", color: "var(--text-main)" }}>Live Security Threat Alerts</p>
-          <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: 0 }}>Streaming real-time incident reports from AI anomaly detector</p>
-        </div>
-        {alerts.length > 0 && (
-          <button 
-            onClick={onClearAlerts}
-            className="action-btn action-btn-danger"
-          >
-            <Trash2 size={14} /> Clear Active Alerts
-          </button>
-        )}
+    <div className="tab-page active" id="alerts">
+      <div className="page-head"><div><div className="eyebrow">MONITOR / LIVE ALERTS</div><div className="page-title">Live alerts</div></div></div>
+      <div className="filter-row">
+        <div className={`chip ${filter === 'All' ? 'active' : ''}`} onClick={() => setFilter('All')} style={{cursor: 'pointer'}}>All · {alerts.length}</div>
+        <div className={`chip ${filter === 'Dos/DDoS' ? 'active' : ''}`} onClick={() => setFilter('Dos/DDoS')} style={{cursor: 'pointer'}}>Dos/DDoS · {dosCount}</div>
+        <div className={`chip ${filter === 'PortScan' ? 'active' : ''}`} onClick={() => setFilter('PortScan')} style={{cursor: 'pointer'}}>PortScan · {portScanCount}</div>
+        <div className={`chip ${filter === 'Brute Force' ? 'active' : ''}`} onClick={() => setFilter('Brute Force')} style={{cursor: 'pointer'}}>Brute Force · {bruteCount}</div>
+        <div className={`chip ${filter === 'Web Attack' ? 'active' : ''}`} onClick={() => setFilter('Web Attack')} style={{cursor: 'pointer'}}>Web Attack · {webCount}</div>
+        <div className={`chip ${filter === 'Other' ? 'active' : ''}`} onClick={() => setFilter('Other')} style={{cursor: 'pointer'}}>Other · {otherCount}</div>
       </div>
-
-      {/* Severity Counters Bar */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginBottom: "16px" }}>
-        <div onClick={() => setSelectedSev('ALL')} style={{ cursor: "pointer", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "10px", border: selectedSev === 'ALL' ? "1px solid var(--text-accent)" : "1px solid var(--border)" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: "500" }}>TOTAL ALERTS</span>
-          <p style={{ fontSize: "20px", fontWeight: "700", margin: "2px 0 0", color: "var(--text-main)" }}>{alerts.length}</p>
-        </div>
-        <div onClick={() => setSelectedSev('CRITICAL')} style={{ cursor: "pointer", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "10px", border: selectedSev === 'CRITICAL' ? "1px solid var(--text-danger)" : "1px solid var(--border)" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-danger)", fontWeight: "500" }}>CRITICAL</span>
-          <p style={{ fontSize: "20px", fontWeight: "700", margin: "2px 0 0", color: "var(--text-danger)" }}>{criticalCount}</p>
-        </div>
-        <div onClick={() => setSelectedSev('HIGH')} style={{ cursor: "pointer", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "10px", border: selectedSev === 'HIGH' ? "1px solid var(--text-danger)" : "1px solid var(--border)" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-danger)", fontWeight: "500" }}>HIGH</span>
-          <p style={{ fontSize: "20px", fontWeight: "700", margin: "2px 0 0", color: "var(--text-danger)" }}>{highCount}</p>
-        </div>
-        <div onClick={() => setSelectedSev('MEDIUM')} style={{ cursor: "pointer", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "10px", border: selectedSev === 'MEDIUM' ? "1px solid var(--text-warning)" : "1px solid var(--border)" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-warning)", fontWeight: "500" }}>MEDIUM</span>
-          <p style={{ fontSize: "20px", fontWeight: "700", margin: "2px 0 0", color: "var(--text-warning)" }}>{mediumCount}</p>
-        </div>
-        <div onClick={() => setSelectedSev('LOW')} style={{ cursor: "pointer", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "10px", border: selectedSev === 'LOW' ? "1px solid var(--text-secondary)" : "1px solid var(--border)" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: "500" }}>LOW</span>
-          <p style={{ fontSize: "20px", fontWeight: "700", margin: "2px 0 0", color: "var(--text-secondary)" }}>{lowCount}</p>
-        </div>
-      </div>
-
-      {/* Control Bar: Filter Tabs + Search Bar */}
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "16px", background: "var(--surface-1)", padding: "10px 14px", borderRadius: "12px", border: "1px solid var(--border)" }}>
-        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-          <Filter size={14} color="var(--text-secondary)" style={{ marginRight: "4px" }} />
-          {['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(sev => (
-            <button
-              key={sev}
-              onClick={() => setSelectedSev(sev)}
-              className={`filter-btn ${selectedSev === sev ? 'active' : ''}`}
-            >
-              {sev}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ position: "relative", minWidth: "240px" }}>
-          <Search size={14} color="var(--text-secondary)" style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }} />
-          <input
-            type="text"
-            placeholder="Search IP, attack type..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "7px 10px 7px 32px",
-              borderRadius: "8px",
-              border: "1px solid var(--border)",
-              background: "var(--bg-base)",
-              color: "var(--text-main)",
-              fontSize: "12px",
-              outline: "none"
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Alerts Feed */}
-      <div className="card-anim" style={{ display: "flex", flexDirection: "column", gap: "10px", background: "var(--surface-1)", padding: "1.25rem", borderRadius: "12px", border: "1px solid var(--border)" }}>
-        {filteredAlerts.map((alert, i) => {
-          const style = getBadgeStyle(alert.severity);
-          return (
-            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", background: style.bg, borderRadius: "10px", border: `1px solid ${style.border}`, transition: "transform 0.15s ease" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <ShieldAlert size={20} color={style.text} />
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--text-main)" }}>{alert.type}</span>
-                    <span style={{ fontSize: "11px", fontFamily: "monospace", background: "rgba(0,0,0,0.15)", padding: "2px 6px", borderRadius: "4px", color: "var(--text-muted)" }}>{alert.id}</span>
-                  </div>
-                  <span style={{ fontSize: "12px", color: "var(--text-secondary)", fontFamily: "monospace" }}>
-                    {alert.srcIp} &rarr; {alert.destIp}
-                  </span>
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "11px", fontWeight: "700", color: style.text, textTransform: "uppercase", padding: "3px 8px", borderRadius: "6px", background: "rgba(0,0,0,0.15)", display: "inline-block", marginBottom: "4px" }}>
-                  {alert.severity || 'HIGH'}
-                </span>
-                <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{alert.time}</p>
-              </div>
-            </div>
-          );
-        })}
-        {filteredAlerts.length === 0 && (
-          <div style={{ padding: "32px 16px", background: "var(--surface-1)", borderRadius: "var(--radius)", textAlign: "center" }}>
-            <AlertTriangle size={24} color="var(--text-secondary)" style={{ marginBottom: "8px" }} />
-            <p style={{ fontSize: "14px", color: "var(--text-main)", fontWeight: "500", margin: "0 0 4px" }}>No alerts matching criteria</p>
-            <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: 0 }}>All network traffic flows are currently within normal baseline parameters.</p>
-          </div>
-        )}
+      <div className="alerts-table-container">
+        <table className="alerts-table">
+          <thead>
+            <tr>
+              <th>Alert ID</th>
+              <th>Timestamp</th>
+              <th>Severity</th>
+              <th>Threat type</th>
+              <th>Source IP</th>
+              <th>Destination IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredAlerts.map((a, i) => {
+              const sev = a.severity ? a.severity.toLowerCase() : 'high';
+              const timeStr = (a.time || '').split(' ')[1] || a.time;
+              
+              return (
+                <React.Fragment key={a.id || i}>
+                  <tr 
+                    className={a.isRead ? 'read' : ''} 
+                    style={{ cursor: 'pointer', borderBottom: expandedId === a.id ? 'none' : '' }}
+                    onClick={() => handleAlertClick(a.id)}
+                  >
+                    <td className="ip-mono" style={{ color: 'var(--text-secondary)' }}>{a.id || `ALT-${Math.floor(4600 - i)}`}</td>
+                    <td className="ip-mono">{timeStr}</td>
+                    <td>
+                      <span className={`sev-badge ${sev}`}>
+                        {sev.charAt(0).toUpperCase() + sev.slice(1)}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: '500' }}>{a.type}</td>
+                    <td className="ip-mono">{a.srcIp}</td>
+                    <td className="ip-mono">{a.destIp}</td>
+                  </tr>
+                  
+                  {expandedId === a.id && (
+                    <tr style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
+                      <td colSpan="6" style={{ padding: 0 }}>
+                        <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '20px', fontSize: '13px', borderBottom: '1px solid var(--border)' }}>
+                          <div>
+                            <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Source Port</div>
+                            <div className="ip-mono">{a.sport}</div>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Destination Port</div>
+                            <div className="ip-mono">{a.dport}</div>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Protocol</div>
+                            <div>{a.proto}</div>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Flags</div>
+                            <div className="ip-mono">{a.flags}</div>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-tertiary)', marginBottom: '6px' }}>Total Packets</div>
+                            <div className="ip-mono">{a.packets}</div>
+                          </div>
+                          
+                          <div style={{ gridColumn: '1 / -1', marginTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                            <button onClick={(e) => { e.stopPropagation(); handleBlockIp(a.srcIp); }} style={{ background: 'var(--critical-dim)', color: 'var(--critical)', border: '1px solid var(--critical)', padding: '8px 16px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                              Block Source IP ({a.srcIp})
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+            {filteredAlerts.length === 0 && (
+              <tr>
+                <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                  No {filter !== 'All' ? filter.toLowerCase() : 'active'} alerts detected.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
-

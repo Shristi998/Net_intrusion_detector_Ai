@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 # Connect to database
-db_path = os.path.join(os.path.dirname(__file__), 'logs', 'alerts.db')
+db_path = os.path.join(os.path.dirname(__file__), 'nids.db')
 
 def get_connection():
     if not os.path.exists(os.path.dirname(db_path)):
@@ -20,6 +20,7 @@ def get_connection():
 
 def init_db_if_not_exists():
     conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = ON;")
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS TRAFFIC_LOG (
@@ -29,17 +30,37 @@ def init_db_if_not_exists():
             port INTEGER,
             protocol TEXT,
             classification TEXT,
-            timestamp TEXT
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # We also need USER table since ALERT references it
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS USER (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            first_name TEXT,
+            last_name TEXT,
+            email TEXT,
+            role TEXT
+        )
+    ''')
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ALERT (
             alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            log_id INTEGER,
+            log_id INTEGER NOT NULL,
+            user_id INTEGER,
             severity_level TEXT,
-            resolution_status TEXT,
-            generated_at TEXT,
-            FOREIGN KEY(log_id) REFERENCES TRAFFIC_LOG(log_id)
+            resolution_status TEXT DEFAULT 'Open',
+            generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (log_id) REFERENCES TRAFFIC_LOG (log_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES USER (user_id)
+                ON DELETE SET NULL
+                ON UPDATE CASCADE
         )
     ''')
     conn.commit()
@@ -58,7 +79,7 @@ if st.sidebar.button("Refresh Data"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("This dashboard automatically reflects changes made to the `alerts.db` SQLite tracking database.")
+st.sidebar.info("This dashboard automatically reflects changes made to the `nids.db` SQLite tracking database.")
 
 # Data fetching
 try:

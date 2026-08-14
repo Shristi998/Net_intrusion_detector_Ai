@@ -26,3 +26,5 @@ env/
 # IDE
 .vscode/
 .idea/
+cleaned_dos_dataset.csv
+others/Data/raw/*.csv

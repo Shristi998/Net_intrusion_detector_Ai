@@ -285,18 +285,18 @@ export default function Landing({ onEnter, theme, toggleTheme }) {
 
       <div className="hero-section">
         <div className="pill-badge">
-          <Activity size={14} /> v2.0 Live Analysis Active
+          <Activity size={14} /> V1.0 Live Analysis Active
         </div>
-        
+
         <h1 className="hero-title">
-          Next-Generation <br/>
+          Next-Generation <br />
           <span>Network Security</span>
         </h1>
-        
+
         <p className="hero-desc">
           An AI-powered intrusion detection system using GAN-augmented XGBoost to monitor, analyze, and neutralize network threats in real-time.
         </p>
-        
+
         <button className="cta-btn" onClick={onEnter}>
           Access Command Center <ArrowRight size={20} />
         </button>
@@ -312,7 +312,7 @@ export default function Landing({ onEnter, theme, toggleTheme }) {
             Utilizes a highly optimized XGBoost classifier trained on extensive datasets to achieve over 99% accuracy across various intrusion tactics including DDoS, Web Attacks, and Infiltrations.
           </p>
         </div>
-        
+
         <div className="feature-card">
           <div className="feature-icon">
             <Activity size={24} />
@@ -322,7 +322,7 @@ export default function Landing({ onEnter, theme, toggleTheme }) {
             Directly interfaces with network traffic on your infrastructure. Extracts flow telemetry and applies instant machine learning inferences to block threats at the wire speed.
           </p>
         </div>
-        
+
         <div className="feature-card">
           <div className="feature-icon">
             <Lock size={24} />

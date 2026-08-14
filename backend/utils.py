@@ -216,13 +216,216 @@ class FlowFeatures:
         ]
 
 
+class WelfordStats:
+    def __init__(self):
+        self.count = 0
+        self.mean = 0.0
+        self.m2 = 0.0
+        self.min_val = float('inf')
+        self.max_val = float('-inf')
+        
+    def update(self, val: float):
+        self.count += 1
+        delta = val - self.mean
+        self.mean += delta / self.count
+        delta2 = val - self.mean
+        self.m2 += delta * delta2
+        if val < self.min_val: self.min_val = val
+        if val > self.max_val: self.max_val = val
+            
+    def get_variance(self) -> float:
+        if self.count < 2: return 0.0
+        return self.m2 / (self.count - 1)
+        
+    def get_std(self) -> float:
+        return math.sqrt(self.get_variance())
+
+    def get_mean(self) -> float:
+        return self.mean if self.count > 0 else 0.0
+
+    def get_max(self) -> float:
+        return self.max_val if self.count > 0 else 0.0
+
+    def get_min(self) -> float:
+        return self.min_val if self.count > 0 else 0.0
+
+@dataclass
+class FlowState:
+    # State flags
+    first_timestamp: float = 0.0
+    last_timestamp: float = 0.0
+    
+    dst_port: int = 0
+    protocol: int = 0
+    
+    # Packet and Byte counts
+    total_pkts: int = 0
+    fwd_pkts: int = 0
+    bwd_pkts: int = 0
+    
+    total_bytes: int = 0
+    fwd_bytes: int = 0
+    bwd_bytes: int = 0
+    
+    # Length stats
+    fwd_len_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_len_stats: WelfordStats = field(default_factory=WelfordStats)
+    all_len_stats: WelfordStats = field(default_factory=WelfordStats)
+    
+    # IAT Stats
+    flow_iat_stats: WelfordStats = field(default_factory=WelfordStats)
+    fwd_iat_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_iat_stats: WelfordStats = field(default_factory=WelfordStats)
+    
+    last_fwd_timestamp: float = 0.0
+    last_bwd_timestamp: float = 0.0
+    
+    # Flag counts
+    fin_count: int = 0
+    syn_count: int = 0
+    rst_count: int = 0
+    psh_count: int = 0
+    ack_count: int = 0
+    urg_count: int = 0
+    cwe_count: int = 0
+    ece_count: int = 0
+    
+    fwd_psh: int = 0
+    bwd_psh: int = 0
+    fwd_urg: int = 0
+    bwd_urg: int = 0
+    
+    # Headers
+    fwd_header_len: int = 0
+    bwd_header_len: int = 0
+    
+    # Windows
+    init_win_fwd: int = -1
+    init_win_bwd: int = -1
+    
+    # Segment sizes
+    act_data_pkt_fwd: int = 0
+    min_seg_size_fwd: int = float('inf')
+    
+    # Active/Idle periods
+    active_stats: WelfordStats = field(default_factory=WelfordStats)
+    idle_stats: WelfordStats = field(default_factory=WelfordStats)
+    current_active_start: float = 0.0
+    
+    # Bulk Transfer States
+    BULK_THRESHOLD: float = 1.0
+    
+    fwd_bulk_bytes: int = 0
+    fwd_bulk_pkts: int = 0
+    fwd_bulk_start: float = 0.0
+    fwd_bulk_size_stats: WelfordStats = field(default_factory=WelfordStats)
+    fwd_bulk_pkts_stats: WelfordStats = field(default_factory=WelfordStats)
+    fwd_bulk_rate_stats: WelfordStats = field(default_factory=WelfordStats)
+    
+    bwd_bulk_bytes: int = 0
+    bwd_bulk_pkts: int = 0
+    bwd_bulk_start: float = 0.0
+    bwd_bulk_size_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_bulk_pkts_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_bulk_rate_stats: WelfordStats = field(default_factory=WelfordStats)
+    
+    # Subflow states
+    current_subflow_dir: Optional[str] = None
+    current_subflow_pkts: int = 0
+    current_subflow_bytes: int = 0
+    
+    fwd_subflow_pkts_stats: WelfordStats = field(default_factory=WelfordStats)
+    fwd_subflow_bytes_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_subflow_pkts_stats: WelfordStats = field(default_factory=WelfordStats)
+    bwd_subflow_bytes_stats: WelfordStats = field(default_factory=WelfordStats)
+    
+    has_fin_or_rst: bool = False
+
+    def update_subflow(self, direction: str, pkt_len: int):
+        if self.current_subflow_dir is None:
+            self.current_subflow_dir = direction
+            self.current_subflow_pkts = 1
+            self.current_subflow_bytes = pkt_len
+        elif direction == self.current_subflow_dir:
+            self.current_subflow_pkts += 1
+            self.current_subflow_bytes += pkt_len
+        else:
+            # End current subflow
+            if self.current_subflow_dir == 'fwd':
+                self.fwd_subflow_pkts_stats.update(self.current_subflow_pkts)
+                self.fwd_subflow_bytes_stats.update(self.current_subflow_bytes)
+            else:
+                self.bwd_subflow_pkts_stats.update(self.current_subflow_pkts)
+                self.bwd_subflow_bytes_stats.update(self.current_subflow_bytes)
+            
+            # Start new subflow
+            self.current_subflow_dir = direction
+            self.current_subflow_pkts = 1
+            self.current_subflow_bytes = pkt_len
+
+    def finalize_subflow(self):
+        if self.current_subflow_dir == 'fwd':
+            self.fwd_subflow_pkts_stats.update(self.current_subflow_pkts)
+            self.fwd_subflow_bytes_stats.update(self.current_subflow_bytes)
+        elif self.current_subflow_dir == 'bwd':
+            self.bwd_subflow_pkts_stats.update(self.current_subflow_pkts)
+            self.bwd_subflow_bytes_stats.update(self.current_subflow_bytes)
+
+    def update_bulk(self, direction: str, pkt_len: int, timestamp: float):
+        if direction == 'fwd':
+            if self.fwd_bulk_pkts == 0:
+                self.fwd_bulk_start = timestamp
+                self.fwd_bulk_bytes = pkt_len
+                self.fwd_bulk_pkts = 1
+            elif (timestamp - self.fwd_bulk_start) <= self.BULK_THRESHOLD:
+                self.fwd_bulk_bytes += pkt_len
+                self.fwd_bulk_pkts += 1
+            else:
+                # End fwd bulk
+                self.fwd_bulk_size_stats.update(self.fwd_bulk_bytes)
+                self.fwd_bulk_pkts_stats.update(self.fwd_bulk_pkts)
+                dur = timestamp - self.fwd_bulk_start
+                dur = dur if dur > 0 else 1e-6
+                self.fwd_bulk_rate_stats.update(self.fwd_bulk_bytes / dur)
+                # Start new
+                self.fwd_bulk_start = timestamp
+                self.fwd_bulk_bytes = pkt_len
+                self.fwd_bulk_pkts = 1
+        else:
+            if self.bwd_bulk_pkts == 0:
+                self.bwd_bulk_start = timestamp
+                self.bwd_bulk_bytes = pkt_len
+                self.bwd_bulk_pkts = 1
+            elif (timestamp - self.bwd_bulk_start) <= self.BULK_THRESHOLD:
+                self.bwd_bulk_bytes += pkt_len
+                self.bwd_bulk_pkts += 1
+            else:
+                # End bwd bulk
+                self.bwd_bulk_size_stats.update(self.bwd_bulk_bytes)
+                self.bwd_bulk_pkts_stats.update(self.bwd_bulk_pkts)
+                dur = timestamp - self.bwd_bulk_start
+                dur = dur if dur > 0 else 1e-6
+                self.bwd_bulk_rate_stats.update(self.bwd_bulk_bytes / dur)
+                # Start new
+                self.bwd_bulk_start = timestamp
+                self.bwd_bulk_bytes = pkt_len
+                self.bwd_bulk_pkts = 1
+
+    def finalize_bulk(self):
+        if self.fwd_bulk_pkts > 0:
+            self.fwd_bulk_size_stats.update(self.fwd_bulk_bytes)
+            self.fwd_bulk_pkts_stats.update(self.fwd_bulk_pkts)
+            self.fwd_bulk_rate_stats.update(self.fwd_bulk_bytes / 0.001)
+        if self.bwd_bulk_pkts > 0:
+            self.bwd_bulk_size_stats.update(self.bwd_bulk_bytes)
+            self.bwd_bulk_pkts_stats.update(self.bwd_bulk_pkts)
+            self.bwd_bulk_rate_stats.update(self.bwd_bulk_bytes / 0.001)
+
 class FlowCollector:
-    """Aggregates packets into bidirectional flows and computes CICFlowMeter features."""
+    """Aggregates packets into bidirectional flows and computes CICFlowMeter features in O(1) memory."""
 
     def __init__(self):
-        self.flows: Dict[Tuple[str, int, str, int, int], List[PacketInfo]] = defaultdict(list)
-        self.last_activity: Dict[Tuple, float] = {}
-        self.flow_start: Dict[Tuple, float] = {}
+        self.flows: Dict[Tuple[str, int, str, int, int], FlowState] = defaultdict(FlowState)
 
     @staticmethod
     def flow_key(pkt: PacketInfo) -> Tuple[str, int, str, int, int]:
@@ -231,405 +434,250 @@ class FlowCollector:
         return (pkt.src_ip, pkt.src_port, pkt.dst_ip, pkt.dst_port, pkt.protocol)
 
     def add_packet(self, pkt_info: PacketInfo):
-        """Add a packet to its flow."""
+        """Add a packet to its flow and update O(1) rolling statistics."""
         key = self.flow_key(pkt_info)
+        is_first = key not in self.flows
+        state = self.flows[key]
         now = pkt_info.timestamp
+        length = pkt_info.length
+        
+        # Check termination condition
+        if pkt_info.flags & 0x01 or pkt_info.flags & 0x04:
+            state.has_fin_or_rst = True
+            
+        # Determine direction
+        is_fwd = (pkt_info.src_ip == key[0] and pkt_info.src_port == key[1])
+        direction = 'fwd' if is_fwd else 'bwd'
 
-        if key not in self.flows:
-            self.flow_start[key] = now
-        self.flows[key].append(pkt_info)
-        self.last_activity[key] = now
-
-    def _separate_directions(self, packets: List[PacketInfo]) -> Tuple[List[PacketInfo], List[PacketInfo]]:
-        """Split packets into forward (from flow initiator) and backward directions."""
-        if not packets:
-            return [], []
-
-        first = packets[0]
-        src_ip, dst_ip = first.src_ip, first.dst_ip
-        src_port, dst_port = first.src_port, first.dst_port
-
-        fwd_packets = []
-        bwd_packets = []
-
-        for pkt in packets:
-            if (pkt.src_ip == src_ip and pkt.dst_ip == dst_ip and
-                    pkt.src_port == src_port and pkt.dst_port == dst_port):
-                fwd_packets.append(pkt)
-            else:
-                bwd_packets.append(pkt)
-
-        return fwd_packets, bwd_packets
-
-    @staticmethod
-    def _safe_mean(data: List[float]) -> float:
-        return sum(data) / len(data) if data else 0.0
-
-    @staticmethod
-    def _safe_std(data: List[float]) -> float:
-        if len(data) < 2:
-            return 0.0
-        return statistics.stdev(data)
-
-    @staticmethod
-    def _safe_min(data: List[float]) -> float:
-        return min(data) if data else 0.0
-
-    @staticmethod
-    def _safe_max(data: List[float]) -> float:
-        return max(data) if data else 0.0
-
-    @staticmethod
-    def _safe_var(data: List[float]) -> float:
-        if len(data) < 2:
-            return 0.0
-        return statistics.variance(data)
-
-    def extract_features(self, packets: List[PacketInfo]) -> FlowFeatures:
-        """Compute all 79 flow-level features from a list of packets."""
-        features = FlowFeatures()
-
-        if not packets or len(packets) < 2:
-            return features
-
-        fwd_pkts, bwd_pkts = self._separate_directions(packets)
-        all_lengths = [pkt.length for pkt in packets]
-        timestamps = sorted([pkt.timestamp for pkt in packets])
-
-        # ---- Basic Flow Metrics ----
-        features.Destination_Port = float(packets[0].dst_port)
-        features.Protocol = float(packets[0].protocol)
-        features.Flow_Duration = (max(timestamps) - min(timestamps)) * 1_000_000  # microseconds
-        features.Flow_Bytess = float(sum(all_lengths))
-        features.Flow_Packetss = float(len(packets))
-
-        # ---- Forward Packet Statistics ----
-        fwd_lengths = [pkt.length for pkt in fwd_pkts]
-        features.Total_Fwd_Packets = float(len(fwd_pkts))
-        features.Total_Length_of_Fwd_Packets = float(sum(fwd_lengths))
-        features.Fwd_Packetss = float(len(fwd_pkts))
-
-        if fwd_lengths:
-            features.Fwd_Packet_Length_Max = self._safe_max(fwd_lengths)
-            features.Fwd_Packet_Length_Min = self._safe_min(fwd_lengths)
-            features.Fwd_Packet_Length_Mean = self._safe_mean(fwd_lengths)
-            features.Fwd_Packet_Length_Std = self._safe_std(fwd_lengths)
-
-        # ---- Backward Packet Statistics ----
-        bwd_lengths = [pkt.length for pkt in bwd_pkts]
-        features.Total_Backward_Packets = float(len(bwd_pkts))
-        features.Total_Length_of_Bwd_Packets = float(sum(bwd_lengths))
-        features.Bwd_Packetss = float(len(bwd_pkts))
-
-        if bwd_lengths:
-            features.Bwd_Packet_Length_Max = self._safe_max(bwd_lengths)
-            features.Bwd_Packet_Length_Min = self._safe_min(bwd_lengths)
-            features.Bwd_Packet_Length_Mean = self._safe_mean(bwd_lengths)
-            features.Bwd_Packet_Length_Std = self._safe_std(bwd_lengths)
-
-        # ---- Global Packet Length Statistics ----
-        features.Min_Packet_Length = self._safe_min(all_lengths)
-        features.Max_Packet_Length = self._safe_max(all_lengths)
-        features.Packet_Length_Mean = self._safe_mean(all_lengths)
-        features.Packet_Length_Std = self._safe_std(all_lengths)
-        features.Packet_Length_Variance = self._safe_var(all_lengths)
-
-        # ---- Inter-Arrival Time (IAT) ----
-        if len(timestamps) >= 2:
-            iats = [timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)]
-            iats_us = [iat * 1_000_000 for iat in iats]
-            features.Flow_IAT_Mean = self._safe_mean(iats_us)
-            features.Flow_IAT_Std = self._safe_std(iats_us)
-            features.Flow_IAT_Max = self._safe_max(iats_us)
-            features.Flow_IAT_Min = self._safe_min(iats_us)
-
-        # Forward IAT
-        fwd_timestamps = sorted([pkt.timestamp for pkt in fwd_pkts])
-        if len(fwd_timestamps) >= 2:
-            fwd_iats = [fwd_timestamps[i + 1] - fwd_timestamps[i] for i in range(len(fwd_timestamps) - 1)]
-            fwd_iats_us = [iat * 1_000_000 for iat in fwd_iats]
-            features.Fwd_IAT_Total = sum(fwd_iats_us)
-            features.Fwd_IAT_Mean = self._safe_mean(fwd_iats_us)
-            features.Fwd_IAT_Std = self._safe_std(fwd_iats_us)
-            features.Fwd_IAT_Max = self._safe_max(fwd_iats_us)
-            features.Fwd_IAT_Min = self._safe_min(fwd_iats_us)
-
-        # Backward IAT
-        bwd_timestamps = sorted([pkt.timestamp for pkt in bwd_pkts])
-        if len(bwd_timestamps) >= 2:
-            bwd_iats = [bwd_timestamps[i + 1] - bwd_timestamps[i] for i in range(len(bwd_timestamps) - 1)]
-            bwd_iats_us = [iat * 1_000_000 for iat in bwd_iats]
-            features.Bwd_IAT_Total = sum(bwd_iats_us)
-            features.Bwd_IAT_Mean = self._safe_mean(bwd_iats_us)
-            features.Bwd_IAT_Std = self._safe_std(bwd_iats_us)
-            features.Bwd_IAT_Max = self._safe_max(bwd_iats_us)
-            features.Bwd_IAT_Min = self._safe_min(bwd_iats_us)
-
-        # ---- TCP Flag Counts ----
-        # TCP flags: FIN=0x01, SYN=0x02, RST=0x04, PSH=0x08, ACK=0x10, URG=0x20, ECE=0x40, CWE=0x80
-        fin_count = 0
-        syn_count = 0
-        rst_count = 0
-        psh_count = 0
-        ack_count = 0
-        urg_count = 0
-        cwe_count = 0
-        ece_count = 0
-        fwd_psh = 0
-        bwd_psh = 0
-        fwd_urg = 0
-        bwd_urg = 0
-
-        for pkt in packets:
-            if pkt.flags & 0x01:
-                fin_count += 1
-            if pkt.flags & 0x02:
-                syn_count += 1
-            if pkt.flags & 0x04:
-                rst_count += 1
-            if pkt.flags & 0x08:
-                psh_count += 1
-            if pkt.flags & 0x10:
-                ack_count += 1
-            if pkt.flags & 0x20:
-                urg_count += 1
-            if pkt.flags & 0x40:
-                ece_count += 1
-            if pkt.flags & 0x80:
-                cwe_count += 1
-
-        for pkt in fwd_pkts:
-            if pkt.flags & 0x08:
-                fwd_psh += 1
-            if pkt.flags & 0x20:
-                fwd_urg += 1
-
-        for pkt in bwd_pkts:
-            if pkt.flags & 0x08:
-                bwd_psh += 1
-            if pkt.flags & 0x20:
-                bwd_urg += 1
-
-        features.FIN_Flag_Count = float(fin_count)
-        features.SYN_Flag_Count = float(syn_count)
-        features.RST_Flag_Count = float(rst_count)
-        features.PSH_Flag_Count = float(psh_count)
-        features.ACK_Flag_Count = float(ack_count)
-        features.URG_Flag_Count = float(urg_count)
-        features.CWE_Flag_Count = float(cwe_count)
-        features.ECE_Flag_Count = float(ece_count)
-        features.Fwd_PSH_Flags = float(fwd_psh)
-        features.Bwd_PSH_Flags = float(bwd_psh)
-        features.Fwd_URG_Flags = float(fwd_urg)
-        features.Bwd_URG_Flags = float(bwd_urg)
-
-        # ---- Header Lengths ----
-        fwd_header_vals = [pkt.header_len for pkt in fwd_pkts]
-        bwd_header_vals = [pkt.header_len for pkt in bwd_pkts]
-        features.Fwd_Header_Length = sum(fwd_header_vals)
-        features.Bwd_Header_Length = sum(bwd_header_vals)
-
-        # ---- Down/Up Ratio ----
-        if features.Total_Length_of_Fwd_Packets > 0 and features.Total_Length_of_Bwd_Packets > 0:
-            features.Down_Up_Ratio = features.Total_Length_of_Fwd_Packets / features.Total_Length_of_Bwd_Packets
-        elif features.Total_Length_of_Bwd_Packets > 0:
-            features.Down_Up_Ratio = features.Total_Length_of_Fwd_Packets
+        if is_first:
+            state.first_timestamp = now
+            state.last_timestamp = now
+            state.dst_port = key[3]
+            state.protocol = key[4]
+            state.current_active_start = now
         else:
-            features.Down_Up_Ratio = 0.0
+            # IAT Global
+            gap = now - state.last_timestamp
+            state.flow_iat_stats.update(gap * 1_000_000)
+            
+            # Active/Idle
+            ACTIVE_THRESHOLD = 1.0
+            if gap > ACTIVE_THRESHOLD:
+                # idle period
+                state.active_stats.update((state.last_timestamp - state.current_active_start) * 1_000_000)
+                state.idle_stats.update(gap * 1_000_000)
+                state.current_active_start = now
 
-        # ---- Average Packet Size ----
-        features.Average_Packet_Size = features.Flow_Bytess / features.Flow_Packetss if features.Flow_Packetss > 0 else 0.0
+        state.last_timestamp = now
+        
+        # Global length stats
+        state.total_pkts += 1
+        state.total_bytes += length
+        state.all_len_stats.update(length)
+        
+        # TCP Flags
+        if pkt_info.flags & 0x01: state.fin_count += 1
+        if pkt_info.flags & 0x02: state.syn_count += 1
+        if pkt_info.flags & 0x04: state.rst_count += 1
+        if pkt_info.flags & 0x08: state.psh_count += 1
+        if pkt_info.flags & 0x10: state.ack_count += 1
+        if pkt_info.flags & 0x20: state.urg_count += 1
+        if pkt_info.flags & 0x40: state.ece_count += 1
+        if pkt_info.flags & 0x80: state.cwe_count += 1
+        
+        if is_fwd:
+            # IAT Fwd
+            if state.fwd_pkts > 0:
+                fwd_gap = now - state.last_fwd_timestamp
+                state.fwd_iat_stats.update(fwd_gap * 1_000_000)
+            state.last_fwd_timestamp = now
+            
+            state.fwd_pkts += 1
+            state.fwd_bytes += length
+            state.fwd_len_stats.update(length)
+            state.fwd_header_len += pkt_info.header_len
+            
+            if pkt_info.flags & 0x08: state.fwd_psh += 1
+            if pkt_info.flags & 0x20: state.fwd_urg += 1
+            
+            if state.init_win_fwd == -1:
+                state.init_win_fwd = pkt_info.tcp_window
+                
+            if length > 0 and not (pkt_info.flags & 0x02):
+                state.act_data_pkt_fwd += 1
+                
+            if length < state.min_seg_size_fwd:
+                state.min_seg_size_fwd = length
+                
+        else:
+            # IAT Bwd
+            if state.bwd_pkts > 0:
+                bwd_gap = now - state.last_bwd_timestamp
+                state.bwd_iat_stats.update(bwd_gap * 1_000_000)
+            state.last_bwd_timestamp = now
+            
+            state.bwd_pkts += 1
+            state.bwd_bytes += length
+            state.bwd_len_stats.update(length)
+            state.bwd_header_len += pkt_info.header_len
+            
+            if pkt_info.flags & 0x08: state.bwd_psh += 1
+            if pkt_info.flags & 0x20: state.bwd_urg += 1
+            
+            if state.init_win_bwd == -1:
+                state.init_win_bwd = pkt_info.tcp_window
 
-        # ---- Avg Segment Size ----
-        if features.Fwd_Packetss > 0:
-            features.Avg_Fwd_Segment_Size = features.Total_Length_of_Fwd_Packets / features.Fwd_Packetss
-        if features.Bwd_Packetss > 0:
-            features.Avg_Bwd_Segment_Size = features.Total_Length_of_Bwd_Packets / features.Bwd_Packetss
+        # Bulk and Subflow streaming
+        state.update_bulk(direction, length, now)
+        state.update_subflow(direction, length)
 
-        # ---- Bulk Transfer Statistics ----
-        # Bulk = consecutive packets in same direction above a threshold
-        BULK_THRESHOLD = 1.0  # second gap threshold for new bulk
-        fwd_bulk_sizes = []
-        bwd_bulk_sizes = []
-        fwd_bulk_pkt_counts = []
-        bwd_bulk_pkt_counts = []
-        fwd_bulk_durations = []
-        bwd_bulk_durations = []
+    def extract_features(self, state: FlowState) -> FlowFeatures:
+        """Compute all 79 flow-level features from O(1) state."""
+        f = FlowFeatures()
 
-        # Sort all packets by timestamp
-        sorted_pkts = sorted(packets, key=lambda p: p.timestamp)
-        current_bulk_bytes = 0
-        current_bulk_pkts = 0
-        current_bulk_start = None
-        current_bulk_dir = None  # 'fwd' or 'bwd'
+        if state.total_pkts < 2:
+            return f
 
-        for pkt in sorted_pkts:
-            is_fwd = pkt in fwd_pkts
-            direction = 'fwd' if is_fwd else 'bwd'
+        f.Destination_Port = float(state.dst_port)
+        f.Protocol = float(state.protocol)
+        f.Flow_Duration = (state.last_timestamp - state.first_timestamp) * 1_000_000
+        f.Flow_Bytess = float(state.total_bytes)
+        f.Flow_Packetss = float(state.total_pkts)
 
-            if current_bulk_dir is None:
-                current_bulk_dir = direction
-                current_bulk_start = pkt.timestamp
-                current_bulk_bytes = pkt.length
-                current_bulk_pkts = 1
-            elif direction == current_bulk_dir and (pkt.timestamp - current_bulk_start) <= BULK_THRESHOLD:
-                current_bulk_bytes += pkt.length
-                current_bulk_pkts += 1
-            else:
-                # End current bulk
-                if current_bulk_dir == 'fwd':
-                    fwd_bulk_sizes.append(current_bulk_bytes)
-                    fwd_bulk_pkt_counts.append(current_bulk_pkts)
-                    if current_bulk_start:
-                        dur = pkt.timestamp - current_bulk_start
-                        fwd_bulk_durations.append(dur if dur > 0 else 1e-6)
-                else:
-                    bwd_bulk_sizes.append(current_bulk_bytes)
-                    bwd_bulk_pkt_counts.append(current_bulk_pkts)
-                    if current_bulk_start:
-                        dur = pkt.timestamp - current_bulk_start
-                        bwd_bulk_durations.append(dur if dur > 0 else 1e-6)
+        f.Total_Fwd_Packets = float(state.fwd_pkts)
+        f.Total_Length_of_Fwd_Packets = float(state.fwd_bytes)
+        f.Fwd_Packetss = float(state.fwd_pkts)
 
-                # Start new bulk
-                current_bulk_dir = direction
-                current_bulk_start = pkt.timestamp
-                current_bulk_bytes = pkt.length
-                current_bulk_pkts = 1
+        if state.fwd_pkts > 0:
+            f.Fwd_Packet_Length_Max = state.fwd_len_stats.get_max()
+            f.Fwd_Packet_Length_Min = state.fwd_len_stats.get_min()
+            f.Fwd_Packet_Length_Mean = state.fwd_len_stats.get_mean()
+            f.Fwd_Packet_Length_Std = state.fwd_len_stats.get_std()
 
-        # Final bulk
-        if current_bulk_dir == 'fwd':
-            fwd_bulk_sizes.append(current_bulk_bytes)
-            fwd_bulk_pkt_counts.append(current_bulk_pkts)
-            fwd_bulk_durations.append(0.001)
-        elif current_bulk_dir == 'bwd':
-            bwd_bulk_sizes.append(current_bulk_bytes)
-            bwd_bulk_pkt_counts.append(current_bulk_pkts)
-            bwd_bulk_durations.append(0.001)
+        f.Total_Backward_Packets = float(state.bwd_pkts)
+        f.Total_Length_of_Bwd_Packets = float(state.bwd_bytes)
+        f.Bwd_Packetss = float(state.bwd_pkts)
 
-        features.Fwd_Avg_Bytes_Bulk = self._safe_mean(fwd_bulk_sizes)
-        features.Fwd_Avg_Packets_Bulk = self._safe_mean(fwd_bulk_pkt_counts)
-        if fwd_bulk_durations:
-            features.Fwd_Avg_Bulk_Rate = self._safe_mean([
-                size / dur for size, dur in zip(fwd_bulk_sizes, fwd_bulk_durations)
-            ])
-        features.Bwd_Avg_Bytes_Bulk = self._safe_mean(bwd_bulk_sizes)
-        features.Bwd_Avg_Packets_Bulk = self._safe_mean(bwd_bulk_pkt_counts)
-        if bwd_bulk_durations:
-            features.Bwd_Avg_Bulk_Rate = self._safe_mean([
-                size / dur for size, dur in zip(bwd_bulk_sizes, bwd_bulk_durations)
-            ])
+        if state.bwd_pkts > 0:
+            f.Bwd_Packet_Length_Max = state.bwd_len_stats.get_max()
+            f.Bwd_Packet_Length_Min = state.bwd_len_stats.get_min()
+            f.Bwd_Packet_Length_Mean = state.bwd_len_stats.get_mean()
+            f.Bwd_Packet_Length_Std = state.bwd_len_stats.get_std()
 
-        # ---- Subflow Statistics ----
-        # Subflow = consecutive packets in same direction
-        subflow_fwd_pkts = []
-        subflow_fwd_bytes_list = []
-        subflow_bwd_pkts = []
-        subflow_bwd_bytes_list = []
+        f.Min_Packet_Length = state.all_len_stats.get_min()
+        f.Max_Packet_Length = state.all_len_stats.get_max()
+        f.Packet_Length_Mean = state.all_len_stats.get_mean()
+        f.Packet_Length_Std = state.all_len_stats.get_std()
+        f.Packet_Length_Variance = state.all_len_stats.get_variance()
 
-        current_dir = None
-        current_count = 0
-        current_bytes = 0
+        if state.flow_iat_stats.count > 0:
+            f.Flow_IAT_Mean = state.flow_iat_stats.get_mean()
+            f.Flow_IAT_Std = state.flow_iat_stats.get_std()
+            f.Flow_IAT_Max = state.flow_iat_stats.get_max()
+            f.Flow_IAT_Min = state.flow_iat_stats.get_min()
 
-        for pkt in sorted_pkts:
-            is_fwd = pkt in fwd_pkts
-            direction = 'fwd' if is_fwd else 'bwd'
+        if state.fwd_iat_stats.count > 0:
+            f.Fwd_IAT_Total = state.fwd_iat_stats.get_mean() * state.fwd_iat_stats.count
+            f.Fwd_IAT_Mean = state.fwd_iat_stats.get_mean()
+            f.Fwd_IAT_Std = state.fwd_iat_stats.get_std()
+            f.Fwd_IAT_Max = state.fwd_iat_stats.get_max()
+            f.Fwd_IAT_Min = state.fwd_iat_stats.get_min()
 
-            if direction == current_dir:
-                current_count += 1
-                current_bytes += pkt.length
-            else:
-                if current_dir == 'fwd':
-                    subflow_fwd_pkts.append(current_count)
-                    subflow_fwd_bytes_list.append(current_bytes)
-                elif current_dir == 'bwd':
-                    subflow_bwd_pkts.append(current_count)
-                    subflow_bwd_bytes_list.append(current_bytes)
+        if state.bwd_iat_stats.count > 0:
+            f.Bwd_IAT_Total = state.bwd_iat_stats.get_mean() * state.bwd_iat_stats.count
+            f.Bwd_IAT_Mean = state.bwd_iat_stats.get_mean()
+            f.Bwd_IAT_Std = state.bwd_iat_stats.get_std()
+            f.Bwd_IAT_Max = state.bwd_iat_stats.get_max()
+            f.Bwd_IAT_Min = state.bwd_iat_stats.get_min()
 
-                current_dir = direction
-                current_count = 1
-                current_bytes = pkt.length
+        f.FIN_Flag_Count = float(state.fin_count)
+        f.SYN_Flag_Count = float(state.syn_count)
+        f.RST_Flag_Count = float(state.rst_count)
+        f.PSH_Flag_Count = float(state.psh_count)
+        f.ACK_Flag_Count = float(state.ack_count)
+        f.URG_Flag_Count = float(state.urg_count)
+        f.CWE_Flag_Count = float(state.cwe_count)
+        f.ECE_Flag_Count = float(state.ece_count)
+        f.Fwd_PSH_Flags = float(state.fwd_psh)
+        f.Bwd_PSH_Flags = float(state.bwd_psh)
+        f.Fwd_URG_Flags = float(state.fwd_urg)
+        f.Bwd_URG_Flags = float(state.bwd_urg)
 
-        # Final subflow
-        if current_dir == 'fwd':
-            subflow_fwd_pkts.append(current_count)
-            subflow_fwd_bytes_list.append(current_bytes)
-        elif current_dir == 'bwd':
-            subflow_bwd_pkts.append(current_count)
-            subflow_bwd_bytes_list.append(current_bytes)
+        f.Fwd_Header_Length = float(state.fwd_header_len)
+        f.Bwd_Header_Length = float(state.bwd_header_len)
 
-        features.Subflow_Fwd_Packets = self._safe_mean(subflow_fwd_pkts)
-        features.Subflow_Fwd_Bytes = self._safe_mean(subflow_fwd_bytes_list)
-        features.Subflow_Bwd_Packets = self._safe_mean(subflow_bwd_pkts)
-        features.Subflow_Bwd_Bytes = self._safe_mean(subflow_bwd_bytes_list)
+        if state.fwd_bytes > 0 and state.bwd_bytes > 0:
+            f.Down_Up_Ratio = state.fwd_bytes / state.bwd_bytes
+        elif state.bwd_bytes > 0:
+            f.Down_Up_Ratio = float(state.fwd_bytes)
+        else:
+            f.Down_Up_Ratio = 0.0
 
-        # ---- Init Window Bytes ----
-        features.Init_Win_bytes_forward = fwd_pkts[0].tcp_window if fwd_pkts else 0.0
-        features.Init_Win_bytes_backward = bwd_pkts[0].tcp_window if bwd_pkts else 0.0
+        if state.total_pkts > 0:
+            f.Average_Packet_Size = state.total_bytes / state.total_pkts
 
-        # ---- Active Data Packets Forward ----
-        features.act_data_pkt_fwd = float(sum(1 for pkt in fwd_pkts if pkt.length > 0 and not (pkt.flags & 0x02)))
+        if state.fwd_pkts > 0:
+            f.Avg_Fwd_Segment_Size = state.fwd_bytes / state.fwd_pkts
+        if state.bwd_pkts > 0:
+            f.Avg_Bwd_Segment_Size = state.bwd_bytes / state.bwd_pkts
 
-        # ---- Min Segment Size Forward ----
-        if fwd_lengths:
-            features.min_seg_size_forward = min(fwd_lengths)
+        # Copy state to finalize
+        import copy
+        final_state = copy.deepcopy(state)
+        final_state.finalize_bulk()
+        final_state.finalize_subflow()
+        final_state.active_stats.update((final_state.last_timestamp - final_state.current_active_start) * 1_000_000)
 
-        # ---- Active/Idle Time Statistics ----
-        ACTIVE_THRESHOLD = 1.0  # seconds - gaps smaller than this = active, larger = idle
-        active_periods = []
-        idle_periods = []
+        f.Fwd_Avg_Bytes_Bulk = final_state.fwd_bulk_size_stats.get_mean()
+        f.Fwd_Avg_Packets_Bulk = final_state.fwd_bulk_pkts_stats.get_mean()
+        f.Fwd_Avg_Bulk_Rate = final_state.fwd_bulk_rate_stats.get_mean()
+        
+        f.Bwd_Avg_Bytes_Bulk = final_state.bwd_bulk_size_stats.get_mean()
+        f.Bwd_Avg_Packets_Bulk = final_state.bwd_bulk_pkts_stats.get_mean()
+        f.Bwd_Avg_Bulk_Rate = final_state.bwd_bulk_rate_stats.get_mean()
 
-        if len(sorted_pkts) >= 2:
-            current_active_start = sorted_pkts[0].timestamp
-            prev_time = sorted_pkts[0].timestamp
+        f.Subflow_Fwd_Packets = final_state.fwd_subflow_pkts_stats.get_mean()
+        f.Subflow_Fwd_Bytes = final_state.fwd_subflow_bytes_stats.get_mean()
+        f.Subflow_Bwd_Packets = final_state.bwd_subflow_pkts_stats.get_mean()
+        f.Subflow_Bwd_Bytes = final_state.bwd_subflow_bytes_stats.get_mean()
 
-            for pkt in sorted_pkts[1:]:
-                gap = pkt.timestamp - prev_time
-                if gap <= ACTIVE_THRESHOLD:
-                    pass  # still in active period
-                else:
-                    active_periods.append(prev_time - current_active_start)
-                    idle_periods.append(gap)
-                    current_active_start = pkt.timestamp
-                prev_time = pkt.timestamp
+        f.Init_Win_bytes_forward = float(state.init_win_fwd) if state.init_win_fwd != -1 else 0.0
+        f.Init_Win_bytes_backward = float(state.init_win_bwd) if state.init_win_bwd != -1 else 0.0
 
-            # Final active period
-            active_periods.append(prev_time - current_active_start)
+        f.act_data_pkt_fwd = float(state.act_data_pkt_fwd)
+        f.min_seg_size_forward = float(state.min_seg_size_fwd) if state.min_seg_size_fwd != float('inf') else 0.0
 
-        if active_periods:
-            features.Active_Mean = self._safe_mean(active_periods) * 1_000_000
-            features.Active_Std = self._safe_std(active_periods) * 1_000_000
-            features.Active_Max = self._safe_max(active_periods) * 1_000_000
-            features.Active_Min = self._safe_min(active_periods) * 1_000_000
+        if final_state.active_stats.count > 0:
+            f.Active_Mean = final_state.active_stats.get_mean()
+            f.Active_Std = final_state.active_stats.get_std()
+            f.Active_Max = final_state.active_stats.get_max()
+            f.Active_Min = final_state.active_stats.get_min()
 
-        if idle_periods:
-            features.Idle_Mean = self._safe_mean(idle_periods) * 1_000_000
-            features.Idle_Std = self._safe_std(idle_periods) * 1_000_000
-            features.Idle_Max = self._safe_max(idle_periods) * 1_000_000
-            features.Idle_Min = self._safe_min(idle_periods) * 1_000_000
+        if final_state.idle_stats.count > 0:
+            f.Idle_Mean = final_state.idle_stats.get_mean()
+            f.Idle_Std = final_state.idle_stats.get_std()
+            f.Idle_Max = final_state.idle_stats.get_max()
+            f.Idle_Min = final_state.idle_stats.get_min()
 
-        return features
+        return f
 
-    def get_ready_flows(self) -> Dict[Tuple, List[PacketInfo]]:
-        """Return flows that are complete (timed out or finished via TCP FIN/RST)."""
+    def get_ready_flows(self) -> Dict[Tuple, FlowFeatures]:
+        """Return FlowFeatures for flows that are complete (timed out or finished)."""
         now = time.time()
         ready = {}
 
-        for key, packets in list(self.flows.items()):
-            if not packets:
+        for key, state in list(self.flows.items()):
+            if state.total_pkts == 0:
                 continue
 
-            # Check for flow termination conditions
-            has_fin_or_rst = any(p.flags & 0x01 or p.flags & 0x04 for p in packets)
-            flow_duration = now - self.flow_start.get(key, now)
-            idle_time = now - self.last_activity.get(key, now)
+            flow_duration = now - state.first_timestamp
+            idle_time = now - state.last_timestamp
 
-            if (has_fin_or_rst and len(packets) >= MIN_FLOW_PACKETS) or \
-               (idle_time > FLOW_TIMEOUT and len(packets) >= MIN_FLOW_PACKETS) or \
-               (flow_duration > MAX_FLOW_DURATION and len(packets) >= MIN_FLOW_PACKETS):
-                ready[key] = packets
+            if (state.has_fin_or_rst and state.total_pkts >= MIN_FLOW_PACKETS) or \
+               (idle_time > FLOW_TIMEOUT and state.total_pkts >= MIN_FLOW_PACKETS) or \
+               (flow_duration > MAX_FLOW_DURATION and state.total_pkts >= MIN_FLOW_PACKETS):
+                ready[key] = self.extract_features(state)
                 del self.flows[key]
-                self.last_activity.pop(key, None)
-                self.flow_start.pop(key, None)
 
         return ready
 
@@ -637,13 +685,11 @@ class FlowCollector:
         """Remove very old incomplete flows."""
         now = time.time()
         stale_keys = [
-            key for key, t in self.flow_start.items()
-            if now - t > max_age and len(self.flows.get(key, [])) < MIN_FLOW_PACKETS
+            key for key, state in self.flows.items()
+            if now - state.first_timestamp > max_age and state.total_pkts < MIN_FLOW_PACKETS
         ]
         for key in stale_keys:
-            self.flows.pop(key, None)
-            self.last_activity.pop(key, None)
-            self.flow_start.pop(key, None)
+            del self.flows[key]
 
 
 def decode_tcp_flags(flags_byte: int) -> int:

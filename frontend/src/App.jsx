@@ -20,6 +20,11 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem('nids_theme', theme);
+    if (theme === 'light') {
+      document.body.classList.add('light-theme');
+    } else {
+      document.body.classList.remove('light-theme');
+    }
   }, [theme]);
 
   const handleLogin = (userProfile) => {

@@ -24,14 +24,14 @@ export default function Login({ onLogin, theme, toggleTheme }) {
     e.preventDefault();
     setError('');
 
-    if (password.length > 0) {
+    if ((isRegistering || isResetting) && password.length > 0) {
       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%]).{8,}$/;
       if (!passwordRegex.test(password)) {
         setError('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character (!@#$%).');
         return;
       }
     }
-    
+
     if (isRegistering || isResetting) {
       const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (!emailRegex.test(email)) {
@@ -39,10 +39,14 @@ export default function Login({ onLogin, theme, toggleTheme }) {
         return;
       }
     }
-    
+
     if (isRegistering) {
-      if (/\d/.test(username)) {
-        setError('Username cannot contain numbers.');
+      if (!/^[a-zA-Z0-9._]+$/.test(username)) {
+        setError('Username can only contain letters, numbers, dots, and underscores.');
+        return;
+      }
+      if (/[._]{2,}/.test(username)) {
+        setError('Username cannot contain consecutive dots or underscores.');
         return;
       }
       if (username.toLowerCase() === password.toLowerCase()) {
@@ -73,7 +77,7 @@ export default function Login({ onLogin, theme, toggleTheme }) {
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Failed to send verification code');
-        
+
         setIsVerifyingCode(true);
         setError('');
         alert('A 4-digit verification code has been sent to your email.');
@@ -90,12 +94,12 @@ export default function Login({ onLogin, theme, toggleTheme }) {
 
     if (isRegistering) {
       endpoint = `${BACKEND_URL}/api/register`;
-      payload = { username, password, firstName, lastName, email, contact, code: verificationCode };
+      payload = { username, password, firstName, lastName, email, contact, code: verificationCode.replace(/ /g, '') };
     } else if (isResetting) {
       endpoint = `${BACKEND_URL}/api/reset-password`;
-      payload = { email, newPassword: password, code: verificationCode };
+      payload = { email, newPassword: password, code: verificationCode.replace(/ /g, '') };
     }
-    
+
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -104,13 +108,13 @@ export default function Login({ onLogin, theme, toggleTheme }) {
         },
         body: JSON.stringify(payload),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Authentication failed');
       }
-      
+
       if (isRegistering) {
         setIsRegistering(false);
         setIsVerifyingCode(false);
@@ -131,6 +135,29 @@ export default function Login({ onLogin, theme, toggleTheme }) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCodeChange = (index, value) => {
+    if (value.length > 1) {
+      const pasted = value.replace(/\D/g, '').slice(0, 4).padEnd(4, ' ');
+      setVerificationCode(pasted);
+      const lastIndex = pasted.trim().length - 1;
+      document.getElementById(`code-input-${Math.max(0, Math.min(3, lastIndex))}`)?.focus();
+      return;
+    }
+    if (!/^\d*$/.test(value)) return;
+    const chars = (verificationCode || '').padEnd(4, ' ').split('');
+    chars[index] = value || ' ';
+    setVerificationCode(chars.join(''));
+    if (value && index < 3) {
+      document.getElementById(`code-input-${index + 1}`)?.focus();
+    }
+  };
+
+  const handleCodeKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !e.target.value && index > 0) {
+      document.getElementById(`code-input-${index - 1}`)?.focus();
     }
   };
 
@@ -376,6 +403,30 @@ export default function Login({ onLogin, theme, toggleTheme }) {
           backdrop-filter: blur(4px);
         }
 
+        .code-inputs {
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+          margin-top: 4px;
+        }
+        .code-input-box {
+          width: 52px;
+          height: 60px;
+          border-radius: 12px;
+          border: 1.5px solid ${isDark ? '#334155' : '#e2e8f0'};
+          background: ${isDark ? 'rgba(255,255,255,0.03)' : '#fff'};
+          color: ${isDark ? '#f8fafc' : '#0f172a'};
+          font-size: 1.75rem;
+          font-weight: 600;
+          text-align: center;
+          transition: all 0.2s;
+        }
+        .code-input-box:focus {
+          outline: none;
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+        }
+
         .top-nav {
           position: absolute;
           top: 24px;
@@ -401,13 +452,13 @@ export default function Login({ onLogin, theme, toggleTheme }) {
           color: ${isDark ? '#f8fafc' : '#0f172a'};
         }
       `}</style>
-      
+
       <div className="top-nav">
         <button className="theme-btn" onClick={toggleTheme} title="Toggle Theme">
           {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>
       </div>
-      
+
       <div className="auth-container">
         <div className="auth-card">
           <div className="brand-header">
@@ -424,11 +475,23 @@ export default function Login({ onLogin, theme, toggleTheme }) {
 
           <form onSubmit={handleSubmit}>
             {error && <div className="error-msg">{error}</div>}
-            
+
             {isVerifyingCode ? (
-              <div className="input-group">
-                <label className="input-label">4-Digit Verification Code</label>
-                <input type="text" className="input-field" placeholder="Enter code from email" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} required pattern="[0-9]{4}" title="Please enter the 4-digit code" maxLength="4" />
+              <div className="input-group" style={{ textAlign: 'center' }}>
+                <label className="input-label" style={{ textAlign: 'center', marginBottom: '8px' }}>4-Digit Verification Code</label>
+                <div className="code-inputs">
+                  {[0, 1, 2, 3].map(i => (
+                    <input
+                      key={i}
+                      id={`code-input-${i}`}
+                      type="text"
+                      className="code-input-box"
+                      value={(verificationCode || '').padEnd(4, ' ')[i] === ' ' ? '' : (verificationCode || '').padEnd(4, ' ')[i]}
+                      onChange={(e) => handleCodeChange(i, e.target.value)}
+                      onKeyDown={(e) => handleCodeKeyDown(i, e)}
+                    />
+                  ))}
+                </div>
               </div>
             ) : (
               <>
@@ -445,20 +508,20 @@ export default function Login({ onLogin, theme, toggleTheme }) {
                   </>
                 )}
 
-                {!isResetting && (
-                  <div className="input-group">
-                    <label className="input-label">Administrator ID (Username)</label>
-                    <input type="text" className="input-field" placeholder="Enter your ID" value={username} onChange={(e) => setUsername(e.target.value)} required pattern="[A-Za-z_]+" title="Only letters and underscores are allowed (no numbers)" />
-                  </div>
-                )}
-
                 {(isRegistering || isResetting) && (
                   <div className="input-group">
                     <label className="input-label">Email</label>
                     <input type="email" className="input-field" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} required />
                   </div>
                 )}
-                
+
+                {!isResetting && (
+                  <div className="input-group">
+                    <label className="input-label">Username</label>
+                    <input type="text" className="input-field" placeholder="Enter your ID" value={username} onChange={(e) => setUsername(e.target.value)} required pattern="^(?!.*[._]{2})[a-zA-Z0-9._]+$" title="Only letters, numbers, dots, and underscores are allowed. Cannot have consecutive dots or underscores." />
+                  </div>
+                )}
+
                 <div className="input-group">
                   <label className="input-label">{isResetting ? "New Password" : "Password"}</label>
                   <div className="input-wrapper">
@@ -470,19 +533,19 @@ export default function Login({ onLogin, theme, toggleTheme }) {
                     )}
                   </div>
                 </div>
-                
+
                 {!isRegistering && !isResetting && (
                   <div className="actions-row">
                     <label className="checkbox-label">
                       <input type="checkbox" className="checkbox" /> Remember me
                     </label>
-                    <span className="forgot-link" style={{cursor:'pointer'}} onClick={() => { setIsResetting(true); setError(''); setIsVerifyingCode(false); }}>Forgot Password?</span>
+                    <span className="forgot-link" style={{ cursor: 'pointer' }} onClick={() => { setIsResetting(true); setError(''); setIsVerifyingCode(false); }}>Forgot Password?</span>
                   </div>
                 )}
               </>
             )}
-            
-            <button type="submit" className="submit-btn" disabled={loading}>
+
+            <button type="submit" className="submit-btn" disabled={loading || (!isVerifyingCode && password.length < 8)}>
               {loading ? 'Processing...' : (isVerifyingCode ? 'Verify & Submit' : (isResetting ? 'Send Reset Code' : (isRegistering ? 'Send Verification Code' : 'Login')))}
             </button>
 

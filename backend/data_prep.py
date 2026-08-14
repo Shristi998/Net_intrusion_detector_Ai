@@ -26,31 +26,33 @@ def run_phase_1(csv_path, output_dir):
         df.dropna(inplace=True)
 
     # STEP 2: ISOLATE TARGET LABELS & DROP SOURCE PORT/IPs
-    target_col = 'newLabel'
+    target_col = 'Label' if 'Label' in df.columns else 'newLabel'
     if target_col not in df.columns:
-        raise ValueError(f"Critical target columns '{target_col}' missing from your dataset layout.")
+        raise ValueError(f"Critical target columns missing from your dataset layout.")
     y_raw = df[target_col]
 
-    features_to_drop = [target_col, 'Source Port']
-    for col in ['Source IP', 'Dest IP', 'Timestamp']:
+    features_to_drop = [target_col]
+    for col in ['Source Port', 'Source IP', 'Dest IP', 'Timestamp']:
         if col in df.columns:
             features_to_drop.append(col)
 
     X = df.drop(columns=features_to_drop)
 
-    # STEP 3: BEHAVIORAL PORT BINNING (Destination Ports)
     print("[*] Engineering Destination Port network profiles...")
-    if 'Destination Port' in X.columns:
-        X['PORT_WELL_KNOWN'] = (X['Destination Port'] < 1024).astype(int)
-        X['PORT_REGISTERED'] = ((X['Destination Port'] >= 1024) & (X['Destination Port'] < 49152)).astype(int)
-        X['PORT_DYNAMIC'] = (X['Destination Port'] >= 49152).astype(int)
-        X.drop(columns=['Destination Port'], inplace=True)
+    port_col = 'Destination Port' if 'Destination Port' in X.columns else 'Dst Port'
+    if port_col in X.columns:
+        X['PORT_WELL_KNOWN'] = (X[port_col] < 1024).astype(int)
+        X['PORT_REGISTERED'] = ((X[port_col] >= 1024) & (X[port_col] < 49152)).astype(int)
+        X['PORT_DYNAMIC'] = (X[port_col] >= 49152).astype(int)
+        X.drop(columns=[port_col], inplace=True)
 
     # STEP 4: LOG TRANSFORM DISTRIBUTIONS FOR VOLUMETRIC DATA
     print("[*] Applying log scale transformation on skewed volumetric parameters...")
     skewed_network_features = [
         'Total Length of Fwd Packets', 'Total Length of Bwd Packets',
-        'Flow Bytess', 'Flow Packetss', 'Fwd Packetss', 'Bwd Packetss',
+        'Fwd Packets Length Total', 'Bwd Packets Length Total',
+        'Flow Bytes/s', 'Flow Packets/s', 'Flow Bytess', 'Flow Packetss',
+        'Fwd Packets/s', 'Bwd Packets/s', 'Fwd Packetss', 'Bwd Packetss',
         'Fwd Packet Length Max', 'Bwd Packet Length Max',
         'Fwd Packet Length Mean', 'Bwd Packet Length Mean'
     ]
